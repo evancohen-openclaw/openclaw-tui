@@ -1,0 +1,297 @@
+package gateway
+
+import (
+	"encoding/json"
+	"fmt"
+	"log"
+	"net/url"
+	"runtime"
+	"sync"
+	"time"
+
+	"github.com/google/uuid"
+	"github.com/gorilla/websocket"
+)
+
+// Client manages the WebSocket connection to an OpenClaw Gateway.
+type Client struct {
+	url       string
+	token     string
+	password  string
+	version   string
+	instanceID string
+
+	conn    *websocket.Conn
+	mu      sync.Mutex
+	closed  bool
+	backoff time.Duration
+
+	pending map[string]chan *ResponseFrame
+	pendMu  sync.Mutex
+
+	// Callbacks
+	OnHelloOk      func(*HelloOk)
+	OnEvent        func(event string, payload json.RawMessage, seq *int)
+	OnConnected    func()
+	OnDisconnected func(reason string)
+}
+
+// NewClient creates a new gateway client.
+func NewClient(wsURL, token, password, version string) *Client {
+	return &Client{
+		url:        wsURL,
+		token:      token,
+		password:   password,
+		version:    version,
+		instanceID: uuid.New().String(),
+		pending:    make(map[string]chan *ResponseFrame),
+		backoff:    time.Second,
+	}
+}
+
+// Start connects to the gateway. Call from a goroutine.
+func (c *Client) Start() {
+	for {
+		c.mu.Lock()
+		if c.closed {
+			c.mu.Unlock()
+			return
+		}
+		c.mu.Unlock()
+
+		err := c.connectAndRun()
+		if err != nil {
+			log.Printf("gateway: %v", err)
+		}
+
+		c.flushPending(fmt.Errorf("disconnected"))
+
+		if c.OnDisconnected != nil {
+			c.OnDisconnected(fmt.Sprintf("%v", err))
+		}
+
+		c.mu.Lock()
+		if c.closed {
+			c.mu.Unlock()
+			return
+		}
+		c.mu.Unlock()
+
+		time.Sleep(c.backoff)
+		if c.backoff < 30*time.Second {
+			c.backoff *= 2
+		}
+	}
+}
+
+// Stop closes the connection.
+func (c *Client) Stop() {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.closed = true
+	if c.conn != nil {
+		c.conn.Close()
+	}
+}
+
+func (c *Client) connectAndRun() error {
+	// Build WS URL with /ws path
+	u, err := url.Parse(c.url)
+	if err != nil {
+		return fmt.Errorf("invalid url: %w", err)
+	}
+	u.Path = "/ws"
+
+	dialer := websocket.DefaultDialer
+	dialer.HandshakeTimeout = 10 * time.Second
+
+	conn, _, err := dialer.Dial(u.String(), nil)
+	if err != nil {
+		return fmt.Errorf("dial failed: %w", err)
+	}
+
+	c.mu.Lock()
+	c.conn = conn
+	c.mu.Unlock()
+
+	defer func() {
+		conn.Close()
+		c.mu.Lock()
+		c.conn = nil
+		c.mu.Unlock()
+	}()
+
+	// Read challenge
+	_, msg, err := conn.ReadMessage()
+	if err != nil {
+		return fmt.Errorf("read challenge: %w", err)
+	}
+
+	var challenge ChallengeFrame
+	if err := json.Unmarshal(msg, &challenge); err != nil {
+		return fmt.Errorf("parse challenge: %w", err)
+	}
+	if challenge.Type != "challenge" {
+		return fmt.Errorf("expected challenge, got %q", challenge.Type)
+	}
+
+	// Send connect
+	connectParams := ConnectParams{
+		MinProtocol: 3,
+		MaxProtocol: 3,
+		Client: ClientInfo{
+			ID:          "openclaw-tui",
+			DisplayName: "openclaw-tui",
+			Version:     c.version,
+			Platform:    runtime.GOOS,
+			Mode:        "ui",
+			InstanceID:  c.instanceID,
+		},
+		Caps: []string{"tool-events"},
+	}
+
+	if c.token != "" || c.password != "" {
+		connectParams.Auth = &ConnectAuth{
+			Token:    c.token,
+			Password: c.password,
+		}
+	}
+
+	helloRes, err := c.doRequest(conn, "connect", connectParams)
+	if err != nil {
+		return fmt.Errorf("connect handshake: %w", err)
+	}
+
+	var hello HelloOk
+	if err := json.Unmarshal(helloRes.Payload, &hello); err != nil {
+		return fmt.Errorf("parse hello: %w", err)
+	}
+
+	c.backoff = time.Second // reset on success
+
+	if c.OnHelloOk != nil {
+		c.OnHelloOk(&hello)
+	}
+	if c.OnConnected != nil {
+		c.OnConnected()
+	}
+
+	// Read loop
+	for {
+		_, msg, err := conn.ReadMessage()
+		if err != nil {
+			return fmt.Errorf("read: %w", err)
+		}
+
+		var generic GenericFrame
+		if err := json.Unmarshal(msg, &generic); err != nil {
+			continue
+		}
+
+		switch generic.Type {
+		case "res":
+			var res ResponseFrame
+			if err := json.Unmarshal(msg, &res); err != nil {
+				continue
+			}
+			c.resolvePending(res.ID, &res)
+
+		case "event":
+			var evt EventFrame
+			if err := json.Unmarshal(msg, &evt); err != nil {
+				continue
+			}
+			if c.OnEvent != nil {
+				c.OnEvent(evt.Event, evt.Payload, evt.Seq)
+			}
+		}
+	}
+}
+
+// Request sends an RPC request and waits for the response.
+func (c *Client) Request(method string, params interface{}) (json.RawMessage, error) {
+	c.mu.Lock()
+	conn := c.conn
+	c.mu.Unlock()
+
+	if conn == nil {
+		return nil, fmt.Errorf("not connected")
+	}
+
+	res, err := c.doRequest(conn, method, params)
+	if err != nil {
+		return nil, err
+	}
+
+	if !res.OK {
+		errMsg := "request failed"
+		if res.Error != nil {
+			errMsg = res.Error.Message
+			if errMsg == "" {
+				errMsg = res.Error.Code
+			}
+		}
+		return nil, fmt.Errorf("%s: %s", method, errMsg)
+	}
+
+	return res.Payload, nil
+}
+
+func (c *Client) doRequest(conn *websocket.Conn, method string, params interface{}) (*ResponseFrame, error) {
+	id := uuid.New().String()
+
+	frame := RequestFrame{
+		Type:   "req",
+		ID:     id,
+		Method: method,
+		Params: params,
+	}
+
+	data, err := json.Marshal(frame)
+	if err != nil {
+		return nil, fmt.Errorf("marshal request: %w", err)
+	}
+
+	ch := make(chan *ResponseFrame, 1)
+	c.pendMu.Lock()
+	c.pending[id] = ch
+	c.pendMu.Unlock()
+
+	defer func() {
+		c.pendMu.Lock()
+		delete(c.pending, id)
+		c.pendMu.Unlock()
+	}()
+
+	c.mu.Lock()
+	err = conn.WriteMessage(websocket.TextMessage, data)
+	c.mu.Unlock()
+	if err != nil {
+		return nil, fmt.Errorf("write request: %w", err)
+	}
+
+	select {
+	case res := <-ch:
+		return res, nil
+	case <-time.After(30 * time.Second):
+		return nil, fmt.Errorf("request timeout: %s", method)
+	}
+}
+
+func (c *Client) resolvePending(id string, res *ResponseFrame) {
+	c.pendMu.Lock()
+	ch, ok := c.pending[id]
+	c.pendMu.Unlock()
+	if ok {
+		ch <- res
+	}
+}
+
+func (c *Client) flushPending(err error) {
+	c.pendMu.Lock()
+	for id, ch := range c.pending {
+		close(ch)
+		delete(c.pending, id)
+	}
+	c.pendMu.Unlock()
+}
