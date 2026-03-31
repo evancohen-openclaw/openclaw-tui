@@ -1556,11 +1556,38 @@ func (m *Model) extractAttachments(text string) (string, []pendingAttachment) {
 	var attachments []pendingAttachment
 	var cleanedLines []string
 
+	// First check if the entire message (minus whitespace) is a raw base64 blob or data URL
+	trimmedAll := strings.TrimSpace(text)
+	if isDataURL(trimmedAll) {
+		if mimeType, data, ok := parseDataURL(trimmedAll); ok {
+			attachments = append(attachments, pendingAttachment{
+				name: "pasted image",
+				attachment: gateway.ChatAttachment{
+					Type:     "image",
+					MimeType: mimeType,
+					Content:  data,
+				},
+			})
+			return "", attachments
+		}
+	}
+	if isRawBase64Image(trimmedAll) && !strings.Contains(trimmedAll, " ") && len(trimmedAll) > 100 {
+		attachments = append(attachments, pendingAttachment{
+			name: "pasted image",
+			attachment: gateway.ChatAttachment{
+				Type:     "image",
+				MimeType: mimeFromBase64Prefix(trimmedAll),
+				Content:  trimmedAll,
+			},
+		})
+		return "", attachments
+	}
+
+	// Otherwise scan line by line for file paths
 	lines := strings.Split(text, "\n")
 	for _, line := range lines {
 		trimmed := strings.TrimSpace(line)
 
-		// Check if the line is a file path (starts with / or ~/ or ./)
 		if isFilePath(trimmed) {
 			expanded := expandPath(trimmed)
 			att, err := loadFileAttachment(expanded)
@@ -1570,6 +1597,19 @@ func (m *Model) extractAttachments(text string) (string, []pendingAttachment) {
 				continue
 			}
 			attachments = append(attachments, *att)
+		} else if isDataURL(trimmed) {
+			if mimeType, data, ok := parseDataURL(trimmed); ok {
+				attachments = append(attachments, pendingAttachment{
+					name: "pasted image",
+					attachment: gateway.ChatAttachment{
+						Type:     "image",
+						MimeType: mimeType,
+						Content:  data,
+					},
+				})
+			} else {
+				cleanedLines = append(cleanedLines, line)
+			}
 		} else {
 			cleanedLines = append(cleanedLines, line)
 		}
@@ -1582,17 +1622,56 @@ func isFilePath(s string) bool {
 	if s == "" {
 		return false
 	}
-	// Must look like a file path
 	if !strings.HasPrefix(s, "/") && !strings.HasPrefix(s, "~/") && !strings.HasPrefix(s, "./") {
 		return false
 	}
-	// Must have a supported extension
 	ext := strings.ToLower(filepath.Ext(s))
 	switch ext {
 	case ".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp", ".svg":
 		return true
 	}
 	return false
+}
+
+func isDataURL(s string) bool {
+	return strings.HasPrefix(s, "data:image/")
+}
+
+func isRawBase64Image(s string) bool {
+	// PNG starts with iVBOR, JPEG with /9j/, GIF with R0lGOD, WebP with UklGR
+	return strings.HasPrefix(s, "iVBOR") || // PNG
+		strings.HasPrefix(s, "/9j/") || // JPEG
+		strings.HasPrefix(s, "R0lGOD") || // GIF
+		strings.HasPrefix(s, "UklGR") // WebP
+}
+
+func mimeFromBase64Prefix(s string) string {
+	switch {
+	case strings.HasPrefix(s, "iVBOR"):
+		return "image/png"
+	case strings.HasPrefix(s, "/9j/"):
+		return "image/jpeg"
+	case strings.HasPrefix(s, "R0lGOD"):
+		return "image/gif"
+	case strings.HasPrefix(s, "UklGR"):
+		return "image/webp"
+	default:
+		return "image/png"
+	}
+}
+
+func parseDataURL(s string) (mimeType, data string, ok bool) {
+	// data:image/png;base64,iVBOR...
+	if !strings.HasPrefix(s, "data:") {
+		return "", "", false
+	}
+	parts := strings.SplitN(s[5:], ",", 2)
+	if len(parts) != 2 {
+		return "", "", false
+	}
+	meta := parts[0] // "image/png;base64"
+	mimeType = strings.TrimSuffix(meta, ";base64")
+	return mimeType, parts[1], true
 }
 
 func expandPath(p string) string {
