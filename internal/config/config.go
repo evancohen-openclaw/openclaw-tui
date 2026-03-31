@@ -10,12 +10,13 @@ import (
 
 // Config holds TUI startup configuration from CLI flags, config file, and env.
 type Config struct {
-	URL      string `json:"url,omitempty"`
-	Token    string `json:"token,omitempty"`
-	Password string `json:"password,omitempty"`
-	Session  string `json:"session,omitempty"`
-	Theme    string `json:"theme,omitempty"` // "dark", "light", or ""
-	Version  string `json:"-"`
+	URL         string `json:"url,omitempty"`
+	Token       string `json:"token,omitempty"`
+	Password    string `json:"password,omitempty"`
+	Session     string `json:"session,omitempty"`
+	Theme       string `json:"theme,omitempty"`       // "dark", "light", or ""
+	TLSInsecure bool   `json:"tlsInsecure,omitempty"` // skip TLS cert verification for self-signed certs
+	Version     string `json:"-"`
 }
 
 // DefaultConfigDir returns the default config directory.

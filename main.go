@@ -15,12 +15,13 @@ var version = "0.1.0"
 
 func main() {
 	var (
-		flagURL      string
-		flagToken    string
-		flagPassword string
-		flagSession  string
-		flagConfig   string
-		flagTheme    string
+		flagURL         string
+		flagToken       string
+		flagPassword    string
+		flagSession     string
+		flagConfig      string
+		flagTheme       string
+		flagTLSInsecure bool
 	)
 
 	rootCmd := &cobra.Command{
@@ -50,6 +51,9 @@ func main() {
 			if cmd.Flags().Changed("theme") {
 				cfg.Theme = flagTheme
 			}
+			if cmd.Flags().Changed("tls-insecure") {
+				cfg.TLSInsecure = flagTLSInsecure
+			}
 
 			cfg.Version = version
 
@@ -69,6 +73,7 @@ func main() {
 	rootCmd.Flags().StringVar(&flagSession, "session", "", "Initial session key")
 	rootCmd.Flags().StringVar(&flagConfig, "config", "", "Config file path (default ~/.config/openclaw-tui/config.json)")
 	rootCmd.Flags().StringVar(&flagTheme, "theme", "", "Theme: dark or light")
+	rootCmd.Flags().BoolVar(&flagTLSInsecure, "tls-insecure", false, "Skip TLS certificate verification (for self-signed certs)")
 
 	// Version command
 	rootCmd.AddCommand(&cobra.Command{

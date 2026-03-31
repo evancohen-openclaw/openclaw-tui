@@ -1,6 +1,7 @@
 package gateway
 
 import (
+	"crypto/tls"
 	"encoding/json"
 	"fmt"
 	"log"
@@ -15,11 +16,12 @@ import (
 
 // Client manages the WebSocket connection to an OpenClaw Gateway.
 type Client struct {
-	url       string
-	token     string
-	password  string
-	version   string
-	instanceID string
+	url         string
+	token       string
+	password    string
+	version     string
+	instanceID  string
+	tlsInsecure bool
 
 	conn    *websocket.Conn
 	mu      sync.Mutex
@@ -38,15 +40,16 @@ type Client struct {
 }
 
 // NewClient creates a new gateway client.
-func NewClient(wsURL, token, password, version string) *Client {
+func NewClient(wsURL, token, password, version string, tlsInsecure bool) *Client {
 	return &Client{
-		url:        wsURL,
-		token:      token,
-		password:   password,
-		version:    version,
-		instanceID: uuid.New().String(),
-		pending:    make(map[string]chan *ResponseFrame),
-		backoff:    time.Second,
+		url:         wsURL,
+		token:       token,
+		password:    password,
+		version:     version,
+		tlsInsecure: tlsInsecure,
+		instanceID:  uuid.New().String(),
+		pending:     make(map[string]chan *ResponseFrame),
+		backoff:     time.Second,
 	}
 }
 
@@ -114,8 +117,12 @@ func (c *Client) connectAndRun() error {
 	}
 	u.Path = "/ws"
 
-	dialer := websocket.DefaultDialer
-	dialer.HandshakeTimeout = 10 * time.Second
+	dialer := &websocket.Dialer{
+		HandshakeTimeout: 10 * time.Second,
+	}
+	if c.tlsInsecure {
+		dialer.TLSClientConfig = &tls.Config{InsecureSkipVerify: true}
+	}
 
 	conn, _, err := dialer.Dial(u.String(), nil)
 	if err != nil {

@@ -147,7 +147,7 @@ func New(cfg config.Config) Model {
 	}
 
 	// Create gateway client
-	m.client = gateway.NewChatClient(cfg.URL, cfg.Token, cfg.Password, cfg.Version)
+	m.client = gateway.NewChatClient(cfg.URL, cfg.Token, cfg.Password, cfg.Version, cfg.TLSInsecure)
 
 	// Wire up event callbacks
 	m.client.OnEvent = func(event string, payload json.RawMessage, seq *int) {
