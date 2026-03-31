@@ -34,6 +34,7 @@ type Client struct {
 	OnEvent        func(event string, payload json.RawMessage, seq *int)
 	OnConnected    func()
 	OnDisconnected func(reason string)
+	OnReconnecting func(attempt int)
 }
 
 // NewClient creates a new gateway client.
@@ -49,8 +50,9 @@ func NewClient(wsURL, token, password, version string) *Client {
 	}
 }
 
-// Start connects to the gateway. Call from a goroutine.
+// Start connects to the gateway with auto-reconnect. Call from a goroutine.
 func (c *Client) Start() {
+	attempt := 0
 	for {
 		c.mu.Lock()
 		if c.closed {
@@ -59,16 +61,13 @@ func (c *Client) Start() {
 		}
 		c.mu.Unlock()
 
+		attempt++
 		err := c.connectAndRun()
 		if err != nil {
 			log.Printf("gateway: %v", err)
 		}
 
 		c.flushPending(fmt.Errorf("disconnected"))
-
-		if c.OnDisconnected != nil {
-			c.OnDisconnected(fmt.Sprintf("%v", err))
-		}
 
 		c.mu.Lock()
 		if c.closed {
@@ -77,9 +76,22 @@ func (c *Client) Start() {
 		}
 		c.mu.Unlock()
 
-		time.Sleep(c.backoff)
-		if c.backoff < 30*time.Second {
-			c.backoff *= 2
+		// Exponential backoff: 1s, 2s, 4s, 8s, 15s max
+		wait := c.backoff
+		if c.OnDisconnected != nil {
+			c.OnDisconnected(fmt.Sprintf("%v (reconnecting in %s)", err, wait.Round(time.Second)))
+		}
+
+		time.Sleep(wait)
+		if c.backoff < 15*time.Second {
+			c.backoff = time.Duration(float64(c.backoff) * 1.5)
+			if c.backoff > 15*time.Second {
+				c.backoff = 15 * time.Second
+			}
+		}
+
+		if c.OnReconnecting != nil {
+			c.OnReconnecting(attempt)
 		}
 	}
 }

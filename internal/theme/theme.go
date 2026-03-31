@@ -115,21 +115,26 @@ var LightPalette = Palette{
 }
 
 // IsLight detects if the terminal has a light background.
-func IsLight() bool {
-	env := strings.ToLower(os.Getenv("OPENCLAW_THEME"))
-	if env == "light" {
-		return true
+// Accepts an optional override from config ("dark", "light", or "").
+func IsLight(override string) bool {
+	src := strings.ToLower(override)
+	if src == "" {
+		src = strings.ToLower(os.Getenv("OPENCLAW_THEME"))
 	}
-	if env == "dark" {
-		return false
+	if src == "light" {
+		return true
 	}
 	// Default to dark
 	return false
 }
 
-// New creates a theme based on terminal detection.
-func New() Theme {
-	light := IsLight()
+// New creates a theme. Pass themeOverride from config (or "").
+func New(themeOverride ...string) Theme {
+	ov := ""
+	if len(themeOverride) > 0 {
+		ov = themeOverride[0]
+	}
+	light := IsLight(ov)
 	p := DarkPalette
 	if light {
 		p = LightPalette

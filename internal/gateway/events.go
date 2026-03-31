@@ -16,6 +16,10 @@ type DisconnectedMsg struct {
 	Reason string
 }
 
+type ReconnectingMsg struct {
+	Attempt int
+}
+
 type ChatEventMsg struct {
 	ChatEventPayload
 }

@@ -120,7 +120,7 @@ func doTick() tea.Cmd {
 
 // New creates the root model.
 func New(cfg config.Config) Model {
-	th := theme.New()
+	th := theme.New(cfg.Theme)
 
 	ta := textarea.New()
 	ta.Placeholder = "Type a message... (/ for commands)"
@@ -171,6 +171,10 @@ func New(cfg config.Config) Model {
 
 	m.client.OnDisconnected = func(reason string) {
 		eventCh <- gateway.DisconnectedMsg{Reason: reason}
+	}
+
+	m.client.OnReconnecting = func(attempt int) {
+		eventCh <- gateway.ReconnectingMsg{Attempt: attempt}
 	}
 
 	m.client.OnHelloOk = func(hello *gateway.HelloOk) {
@@ -234,7 +238,12 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case gateway.DisconnectedMsg:
 		m.connected = false
 		m.connStatus = fmt.Sprintf("disconnected: %s", msg.Reason)
-		m.addSystem(m.connStatus)
+		m.activityStatus = "disconnected"
+		cmds = append(cmds, waitForEvent(m.eventCh))
+		return m, tea.Batch(cmds...)
+
+	case gateway.ReconnectingMsg:
+		m.connStatus = fmt.Sprintf("reconnecting (attempt %d)", msg.Attempt)
 		cmds = append(cmds, waitForEvent(m.eventCh))
 		return m, tea.Batch(cmds...)
 

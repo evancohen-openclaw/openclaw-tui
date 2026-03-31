@@ -1,3 +1,14 @@
+# Binary
 openclaw-tui
-*.exe
+
+# OS
 .DS_Store
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Go
+vendor/
