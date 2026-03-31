@@ -11,9 +11,9 @@ type ChatClient struct {
 }
 
 // NewChatClient creates a ChatClient.
-func NewChatClient(wsURL, token, password, version string, tlsInsecure bool) *ChatClient {
+func NewChatClient(wsURL, token, password, version, configDir string, tlsInsecure bool) *ChatClient {
 	return &ChatClient{
-		Client: NewClient(wsURL, token, password, version, tlsInsecure),
+		Client: NewClient(wsURL, token, password, version, configDir, tlsInsecure),
 	}
 }
 

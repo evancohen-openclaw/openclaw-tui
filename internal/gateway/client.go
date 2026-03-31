@@ -21,6 +21,8 @@ type Client struct {
 	version     string
 	instanceID  string
 	tlsInsecure bool
+	configDir   string
+	device      *DeviceIdentity
 
 	conn    *websocket.Conn
 	mu      sync.Mutex
@@ -39,17 +41,28 @@ type Client struct {
 }
 
 // NewClient creates a new gateway client.
-func NewClient(wsURL, token, password, version string, tlsInsecure bool) *Client {
-	return &Client{
+func NewClient(wsURL, token, password, version, configDir string, tlsInsecure bool) *Client {
+	c := &Client{
 		url:         wsURL,
 		token:       token,
 		password:    password,
 		version:     version,
 		tlsInsecure: tlsInsecure,
+		configDir:   configDir,
 		instanceID:  uuid.New().String(),
 		pending:     make(map[string]chan *ResponseFrame),
 		backoff:     time.Second,
 	}
+
+	// Load or create device identity
+	if configDir != "" {
+		device, err := LoadOrCreateDevice(configDir)
+		if err == nil {
+			c.device = device
+		}
+	}
+
+	return c
 }
 
 // Start connects to the gateway with auto-reconnect. Call from a goroutine.
@@ -152,6 +165,9 @@ func (c *Client) connectAndRun() error {
 	}
 
 	// Send connect
+	role := "operator"
+	scopes := []string{"operator.read", "operator.write"}
+
 	connectParams := ConnectParams{
 		MinProtocol: 3,
 		MaxProtocol: 3,
@@ -163,7 +179,9 @@ func (c *Client) connectAndRun() error {
 			Mode:        "ui",
 			InstanceID:  c.instanceID,
 		},
-		Caps: []string{"tool-events"},
+		Role:   role,
+		Scopes: scopes,
+		Caps:   []string{"tool-events"},
 	}
 
 	if c.token != "" || c.password != "" {
@@ -173,9 +191,52 @@ func (c *Client) connectAndRun() error {
 		}
 	}
 
-	helloRes, err := c.doRequest(conn, "connect", connectParams)
+	// Sign connect with device identity
+	nonce := challenge.Payload.Nonce
+	if c.device != nil {
+		connectParams.Device = c.device.SignConnect(
+			"openclaw-tui", "ui", role, scopes, c.token, nonce,
+		)
+	}
+
+	// Send connect request directly (can't use doRequest — read loop isn't running yet)
+	connectID := uuid.New().String()
+	connectFrame := RequestFrame{
+		Type:   "req",
+		ID:     connectID,
+		Method: "connect",
+		Params: connectParams,
+	}
+	connectData, err := json.Marshal(connectFrame)
 	if err != nil {
-		return fmt.Errorf("connect handshake: %w", err)
+		return fmt.Errorf("marshal connect: %w", err)
+	}
+	if err := conn.WriteMessage(websocket.TextMessage, connectData); err != nil {
+		return fmt.Errorf("write connect: %w", err)
+	}
+
+	// Read the connect response directly
+	conn.SetReadDeadline(time.Now().Add(10 * time.Second))
+	_, msg, err = conn.ReadMessage()
+	conn.SetReadDeadline(time.Time{}) // clear deadline
+	if err != nil {
+		return fmt.Errorf("read connect response: %w", err)
+	}
+
+	var helloRes ResponseFrame
+	if err := json.Unmarshal(msg, &helloRes); err != nil {
+		return fmt.Errorf("parse connect response: %w", err)
+	}
+	if !helloRes.OK {
+		errMsg := "connect rejected"
+		if helloRes.Error != nil {
+			if helloRes.Error.Message != "" {
+				errMsg = helloRes.Error.Message
+			} else if helloRes.Error.Code != "" {
+				errMsg = helloRes.Error.Code
+			}
+		}
+		return fmt.Errorf("connect: %s", errMsg)
 	}
 
 	var hello HelloOk

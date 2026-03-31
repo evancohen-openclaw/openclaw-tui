@@ -56,11 +56,14 @@ type GenericFrame struct {
 
 // ConnectParams is sent as params to the "connect" method.
 type ConnectParams struct {
-	MinProtocol int          `json:"minProtocol"`
-	MaxProtocol int          `json:"maxProtocol"`
-	Client      ClientInfo   `json:"client"`
-	Caps        []string     `json:"caps"`
-	Auth        *ConnectAuth `json:"auth,omitempty"`
+	MinProtocol int                `json:"minProtocol"`
+	MaxProtocol int                `json:"maxProtocol"`
+	Client      ClientInfo         `json:"client"`
+	Role        string             `json:"role"`
+	Scopes      []string           `json:"scopes"`
+	Caps        []string           `json:"caps"`
+	Auth        *ConnectAuth       `json:"auth,omitempty"`
+	Device      *DeviceConnectInfo `json:"device,omitempty"`
 }
 
 type ClientInfo struct {
