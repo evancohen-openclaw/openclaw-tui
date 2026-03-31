@@ -249,8 +249,15 @@ func (m Model) renderMessage(msg chatMessage) string {
 		return " " + style.Render(msg.content)
 
 	case "tool-success":
+		content := msg.content
+		if !m.toolsExpanded {
+			// Collapse to first line only
+			if idx := strings.Index(content, "\n"); idx > 0 {
+				content = content[:idx] + " …"
+			}
+		}
 		style := m.theme.ToolSuccess.Width(w)
-		return " " + style.Render(msg.content)
+		return " " + style.Render(content)
 
 	case "tool-error":
 		style := m.theme.ToolError.Width(w)

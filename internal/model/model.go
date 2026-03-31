@@ -92,8 +92,9 @@ type Model struct {
 	// Event channel
 	eventCh chan tea.Msg
 
-	// Mouse mode (disabled by default so copy/paste works)
-	mouseEnabled bool
+	// UI toggles
+	mouseEnabled  bool
+	toolsExpanded bool
 
 	// Ctrl+C state
 	lastCtrlC time.Time
@@ -404,11 +405,20 @@ func (m *Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.autocompleteActive = false
 			return m, nil
 		}
-	case "shift+enter", "alt+enter", "ctrl+n":
-		// Insert a newline (Ctrl+N for Windows Terminal where Alt+Enter maximizes)
+	case "shift+enter", "alt+enter":
+		// Insert a newline
 		m.input.InsertString("\n")
 		m.resizeInput()
 		return m, nil
+	case "ctrl+t":
+		// Toggle thinking visibility (matches official TUI)
+		m.assembler.ShowThinking = !m.assembler.ShowThinking
+		if m.assembler.ShowThinking {
+			m.addSystem("thinking: visible")
+		} else {
+			m.addSystem("thinking: hidden")
+		}
+		return m, m.loadHistory()
 	case "enter":
 		if m.autocompleteActive && len(m.autocompleteSuggs) > 0 {
 			m.input.Reset()
@@ -448,10 +458,32 @@ func (m *Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			}
 			return m, nil
 		}
+	case "ctrl+l":
+		// Model picker (matches official TUI)
+		return m, m.fetchModelsOverlay()
+	case "ctrl+g":
+		// Agent picker (matches official TUI)
+		return m, m.fetchAgentsOverlay()
+	case "ctrl+p":
+		// Session picker (matches official TUI)
+		return m, m.fetchSessionsOverlay()
+	case "ctrl+o":
+		// Toggle tool output expansion (TODO: implement expanded/collapsed tool cards)
+		m.toolsExpanded = !m.toolsExpanded
+		if m.toolsExpanded {
+			m.addSystem("tool output: expanded")
+		} else {
+			m.addSystem("tool output: collapsed")
+		}
+		return m, nil
 	case "escape":
 		if m.autocompleteActive {
 			m.autocompleteActive = false
 			return m, nil
+		}
+		// Abort active run (matches official TUI)
+		if m.activeRunID != "" {
+			return m, m.abortChat()
 		}
 	case "pgup":
 		m.viewport.HalfPageUp()
