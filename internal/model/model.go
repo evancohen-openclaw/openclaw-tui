@@ -86,6 +86,9 @@ type Model struct {
 	// Event channel
 	eventCh chan tea.Msg
 
+	// Mouse mode (disabled by default so copy/paste works)
+	mouseEnabled bool
+
 	// Ctrl+C state
 	lastCtrlC time.Time
 }
@@ -465,7 +468,7 @@ func (m *Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 var slashCommands = []string{
 	"help", "exit", "quit", "new", "reset", "abort", "status",
 	"model", "models", "agent", "agents", "session", "sessions", "think",
-	"config", "clear",
+	"config", "clear", "mouse",
 }
 
 func (m *Model) updateAutocomplete() {
@@ -689,6 +692,15 @@ func (m *Model) handleCommand(raw string) (tea.Model, tea.Cmd) {
 	case "clear":
 		m.messages = nil
 		m.updateViewport()
+		return m, nil
+
+	case "mouse":
+		m.mouseEnabled = !m.mouseEnabled
+		if m.mouseEnabled {
+			m.addSystem("mouse scrolling enabled (copy/paste disabled)")
+		} else {
+			m.addSystem("mouse scrolling disabled (copy/paste enabled)")
+		}
 		return m, nil
 
 	case "config":

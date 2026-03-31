@@ -139,13 +139,13 @@ type SessionsListResult struct {
 }
 
 type SessionEntry struct {
-	Key                string  `json:"key"`
-	DisplayName        string  `json:"displayName,omitempty"`
-	DerivedTitle       string  `json:"derivedTitle,omitempty"`
-	Label              string  `json:"label,omitempty"`
-	Subject            string  `json:"subject,omitempty"`
-	SessionID          string  `json:"sessionId,omitempty"`
-	UpdatedAt          *string `json:"updatedAt,omitempty"`
+	Key                string           `json:"key"`
+	DisplayName        string           `json:"displayName,omitempty"`
+	DerivedTitle       string           `json:"derivedTitle,omitempty"`
+	Label              string           `json:"label,omitempty"`
+	Subject            string           `json:"subject,omitempty"`
+	SessionID          string           `json:"sessionId,omitempty"`
+	UpdatedAt          json.RawMessage  `json:"updatedAt,omitempty"`
 	LastMessagePreview string  `json:"lastMessagePreview,omitempty"`
 	Model              string  `json:"model,omitempty"`
 	ModelProvider      string  `json:"modelProvider,omitempty"`
