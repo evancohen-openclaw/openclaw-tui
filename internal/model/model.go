@@ -59,11 +59,17 @@ type Model struct {
 	sessionMainKey    string
 
 	// Session info (from list/patch)
-	model         string
-	modelProvider string
-	thinkingLevel string
-	totalTokens   *int
-	contextTokens *int
+	model          string
+	modelProvider  string
+	thinkingLevel  string
+	fastMode       string
+	verboseLevel   string
+	reasoningLevel string
+	responseUsage  string
+	elevatedLevel  string
+	deliver        bool
+	totalTokens    *int
+	contextTokens  *int
 
 	// Chat state
 	messages     []chatMessage
@@ -467,8 +473,9 @@ func (m *Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 var slashCommands = []string{
 	"help", "exit", "quit", "new", "reset", "abort", "status",
-	"model", "models", "agent", "agents", "session", "sessions", "think",
-	"config", "clear", "mouse",
+	"model", "models", "agent", "agents", "session", "sessions",
+	"think", "fast", "verbose", "reasoning", "usage", "elevated", "elev",
+	"deliver", "settings", "clear", "mouse", "config",
 }
 
 func (m *Model) updateAutocomplete() {
@@ -644,9 +651,7 @@ func (m *Model) handleCommand(raw string) (tea.Model, tea.Cmd) {
 
 	case "model":
 		if args == "" {
-			m.addSystem(fmt.Sprintf("current model: %s/%s", m.modelProvider, m.model))
-			m.addSystem("usage: /model <provider/model> (or /models to list)")
-			return m, nil
+			return m, m.fetchModelsOverlay()
 		}
 		return m, m.patchModel(args)
 
@@ -655,9 +660,7 @@ func (m *Model) handleCommand(raw string) (tea.Model, tea.Cmd) {
 
 	case "agent":
 		if args == "" {
-			m.addSystem(fmt.Sprintf("current agent: %s", m.currentAgentID))
-			m.addSystem("usage: /agent <id> (or /agents to list)")
-			return m, nil
+			return m, m.fetchAgentsOverlay()
 		}
 		m.currentAgentID = args
 		m.currentSessionKey = m.resolveSessionKey("")
@@ -670,8 +673,7 @@ func (m *Model) handleCommand(raw string) (tea.Model, tea.Cmd) {
 
 	case "session":
 		if args == "" {
-			m.addSystem(fmt.Sprintf("current session: %s", m.formatSessionKey()))
-			return m, nil
+			return m, m.fetchSessionsOverlay()
 		}
 		m.currentSessionKey = m.resolveSessionKey(args)
 		m.messages = nil
@@ -688,6 +690,64 @@ func (m *Model) handleCommand(raw string) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		return m, m.patchThinking(args)
+
+	case "fast":
+		if args == "" || args == "status" {
+			m.addSystem(fmt.Sprintf("fast mode: %s", orDefault(m.fastMode, "off")))
+			return m, nil
+		}
+		return m, m.patchSessionField("fastMode", args == "on")
+
+	case "verbose":
+		if args == "" {
+			m.addSystem(fmt.Sprintf("verbose: %s", orDefault(m.verboseLevel, "off")))
+			return m, nil
+		}
+		return m, m.patchVerbose(args)
+
+	case "reasoning":
+		if args == "" {
+			m.addSystem(fmt.Sprintf("reasoning: %s", orDefault(m.reasoningLevel, "off")))
+			return m, nil
+		}
+		return m, m.patchReasoning(args)
+
+	case "usage":
+		if args == "" {
+			m.addSystem(fmt.Sprintf("usage display: %s", orDefault(m.responseUsage, "off")))
+			return m, nil
+		}
+		return m, m.patchUsage(args)
+
+	case "elevated", "elev":
+		if args == "" {
+			m.addSystem(fmt.Sprintf("elevated: %s", orDefault(m.elevatedLevel, "off")))
+			return m, nil
+		}
+		return m, m.patchElevated(args)
+
+	case "deliver":
+		if args == "" {
+			m.addSystem(fmt.Sprintf("deliver: %v", m.deliver))
+			return m, nil
+		}
+		m.deliver = args == "on"
+		m.addSystem(fmt.Sprintf("deliver: %v", m.deliver))
+		return m, nil
+
+	case "settings":
+		lines := []string{
+			"Settings",
+			fmt.Sprintf("  model:     %s/%s", m.modelProvider, m.model),
+			fmt.Sprintf("  thinking:  %s", orDefault(m.thinkingLevel, "off")),
+			fmt.Sprintf("  fast:      %s", orDefault(m.fastMode, "off")),
+			fmt.Sprintf("  verbose:   %s", orDefault(m.verboseLevel, "off")),
+			fmt.Sprintf("  reasoning: %s", orDefault(m.reasoningLevel, "off")),
+			fmt.Sprintf("  elevated:  %s", orDefault(m.elevatedLevel, "off")),
+			fmt.Sprintf("  deliver:   %v", m.deliver),
+		}
+		m.addSystem(strings.Join(lines, "\n"))
+		return m, nil
 
 	case "clear":
 		m.messages = nil
@@ -1024,6 +1084,22 @@ func (m *Model) applySessionInfo(result *gateway.SessionsListResult) {
 				m.thinkingLevel = s.ThinkingLevel
 				m.assembler.ShowThinking = m.thinkingLevel != "" && m.thinkingLevel != "off"
 			}
+			if s.FastMode != nil {
+				if *s.FastMode {
+					m.fastMode = "on"
+				} else {
+					m.fastMode = "off"
+				}
+			}
+			if s.VerboseLevel != "" {
+				m.verboseLevel = s.VerboseLevel
+			}
+			if s.ReasoningLevel != "" {
+				m.reasoningLevel = s.ReasoningLevel
+			}
+			if s.ResponseUsage != "" {
+				m.responseUsage = s.ResponseUsage
+			}
 			m.totalTokens = s.TotalTokens
 			m.contextTokens = s.ContextTokens
 			break
@@ -1263,6 +1339,83 @@ func (m *Model) patchThinking(level string) tea.Cmd {
 	}
 }
 
+func (m *Model) patchVerbose(level string) tea.Cmd {
+	client := m.client
+	sessionKey := m.currentSessionKey
+	return func() tea.Msg {
+		result, err := client.PatchSession(gateway.SessionsPatchParams{
+			Key:          sessionKey,
+			VerboseLevel: &level,
+		})
+		if err == nil {
+			return gateway.SessionPatchedMsg{Result: result}
+		}
+		return gateway.SessionPatchedMsg{Err: err}
+	}
+}
+
+func (m *Model) patchReasoning(level string) tea.Cmd {
+	client := m.client
+	sessionKey := m.currentSessionKey
+	return func() tea.Msg {
+		result, err := client.PatchSession(gateway.SessionsPatchParams{
+			Key:            sessionKey,
+			ReasoningLevel: &level,
+		})
+		if err == nil {
+			return gateway.SessionPatchedMsg{Result: result}
+		}
+		return gateway.SessionPatchedMsg{Err: err}
+	}
+}
+
+func (m *Model) patchUsage(level string) tea.Cmd {
+	client := m.client
+	sessionKey := m.currentSessionKey
+	return func() tea.Msg {
+		result, err := client.PatchSession(gateway.SessionsPatchParams{
+			Key:           sessionKey,
+			ResponseUsage: &level,
+		})
+		if err == nil {
+			return gateway.SessionPatchedMsg{Result: result}
+		}
+		return gateway.SessionPatchedMsg{Err: err}
+	}
+}
+
+func (m *Model) patchElevated(level string) tea.Cmd {
+	client := m.client
+	sessionKey := m.currentSessionKey
+	return func() tea.Msg {
+		result, err := client.PatchSession(gateway.SessionsPatchParams{
+			Key:           sessionKey,
+			ElevatedLevel: &level,
+		})
+		if err == nil {
+			return gateway.SessionPatchedMsg{Result: result}
+		}
+		return gateway.SessionPatchedMsg{Err: err}
+	}
+}
+
+func (m *Model) patchSessionField(field string, value bool) tea.Cmd {
+	client := m.client
+	sessionKey := m.currentSessionKey
+	return func() tea.Msg {
+		params := gateway.SessionsPatchParams{Key: sessionKey}
+		switch field {
+		case "fastMode":
+			params.FastMode = &value
+		}
+		result, err := client.PatchSession(params)
+		if err == nil {
+			return gateway.SessionPatchedMsg{Result: result}
+		}
+		return gateway.SessionPatchedMsg{Err: err}
+	}
+}
+
 // --- Text extraction from message records ---
 
 func extractText(record gateway.MessageRecord) string {
@@ -1340,25 +1493,31 @@ func helpText() string {
 	return `Slash commands:
   /help              Show this help
   /status            Gateway status
-  /agent <id>        Switch agent
-  /agents            List agents
-  /session <key>     Switch session
-  /sessions          List sessions
-  /model <p/model>   Set model
-  /models            List models
-  /think <level>     Set thinking level
+  /agent [id]        Agent picker / switch
+  /session [key]     Session picker / switch
+  /model [p/model]   Model picker / set
+  /think <level>     off|minimal|low|medium|high
+  /fast <on|off>     Toggle fast mode
+  /verbose <on|off>  Toggle verbose
+  /reasoning <on|off|stream>
+  /usage <off|tokens|full>
+  /elevated <on|off|ask|full>
+  /deliver <on|off>  Toggle delivery
+  /settings          Show all settings
   /new               New session
   /reset             Reset session
-  /clear             Clear chat display
-  /abort             Abort active run
-  /config            Show config info
+  /clear             Clear display
+  /abort             Abort run
+  /mouse             Toggle mouse scroll
+  /config            Show config
   /exit              Exit
 
 Keyboard:
   Enter              Send message
   Tab                Accept autocomplete
-  ↑/↓                Navigate autocomplete/overlay
+  PgUp/PgDn          Scroll chat
+  Home/End           Jump top/bottom
   Escape             Dismiss popup
-  Ctrl+C             Clear input / double-tap to exit
-  Ctrl+D             Exit immediately`
+  Ctrl+C             Clear / double-tap exit
+  Ctrl+D             Exit`
 }

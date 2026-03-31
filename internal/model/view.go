@@ -133,6 +133,22 @@ func (m Model) renderFooter() string {
 		parts = append(parts, fmt.Sprintf("think %s", m.thinkingLevel))
 	}
 
+	if m.fastMode == "on" {
+		parts = append(parts, "fast")
+	}
+
+	if m.verboseLevel != "" && m.verboseLevel != "off" {
+		parts = append(parts, fmt.Sprintf("verbose %s", m.verboseLevel))
+	}
+
+	if m.reasoningLevel != "" && m.reasoningLevel != "off" {
+		parts = append(parts, fmt.Sprintf("reason %s", m.reasoningLevel))
+	}
+
+	if m.deliver {
+		parts = append(parts, "deliver")
+	}
+
 	parts = append(parts, m.formatTokens())
 
 	text := strings.Join(parts, " │ ")
