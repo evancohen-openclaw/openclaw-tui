@@ -422,7 +422,7 @@ func (m *Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.autocompleteActive = false
 			return m, nil
 		}
-	case "shift+enter", "alt+enter":
+	case "shift+enter", "alt+enter", "ctrl+j":
 		// Insert a newline
 		m.input.InsertString("\n")
 		m.resizeInput()
