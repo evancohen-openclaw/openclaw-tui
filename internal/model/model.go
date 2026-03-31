@@ -17,6 +17,7 @@ import (
 	"charm.land/lipgloss/v2"
 	"github.com/google/uuid"
 
+	"github.com/evancohen/openclaw-tui/internal/clipboard"
 	"github.com/evancohen/openclaw-tui/internal/config"
 	"github.com/evancohen/openclaw-tui/internal/gateway"
 	"github.com/evancohen/openclaw-tui/internal/stream"
@@ -359,6 +360,15 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, tea.Batch(cmds...)
 
+	case clipboardImageMsg:
+		if msg.err != nil {
+			// No image on clipboard — that's fine, normal paste will handle text
+			return m, nil
+		}
+		m.pendingFiles = append(m.pendingFiles, *msg.attachment)
+		m.addSystem(fmt.Sprintf("📎 %s attached — type a message and press Enter to send", msg.attachment.name))
+		return m, nil
+
 	case overlayReadyMsg:
 		if msg.err != nil {
 			m.addSystem(fmt.Sprintf("%s list failed: %v", msg.overlayType, msg.err))
@@ -465,6 +475,9 @@ func (m *Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			}
 			return m, nil
 		}
+	case "ctrl+v":
+		// Try clipboard image first, fall through to normal paste if no image
+		return m, m.pasteClipboardImage()
 	case "ctrl+l":
 		// Model picker (matches official TUI)
 		return m, m.fetchModelsOverlay()
@@ -1580,6 +1593,12 @@ func formatStatus(raw json.RawMessage) string {
 	return strings.Join(lines, "\n")
 }
 
+// clipboardImageMsg is sent when a clipboard image check completes.
+type clipboardImageMsg struct {
+	attachment *pendingAttachment
+	err        error
+}
+
 type pendingAttachment struct {
 	name       string
 	attachment gateway.ChatAttachment
@@ -1759,6 +1778,36 @@ func loadFileAttachment(path string) (*pendingAttachment, error) {
 			Content:  encoded,
 		},
 	}, nil
+}
+
+func (m *Model) pasteClipboardImage() tea.Cmd {
+	return func() tea.Msg {
+		path, mimeType, err := clipboard.GetImage()
+		if err != nil {
+			return clipboardImageMsg{err: err}
+		}
+		defer os.Remove(path)
+
+		data, err := os.ReadFile(path)
+		if err != nil {
+			return clipboardImageMsg{err: fmt.Errorf("read clipboard image: %w", err)}
+		}
+
+		if len(data) > 20*1024*1024 {
+			return clipboardImageMsg{err: fmt.Errorf("clipboard image too large (%d MB)", len(data)/1024/1024)}
+		}
+
+		encoded := base64.StdEncoding.EncodeToString(data)
+		att := &pendingAttachment{
+			name: "clipboard image",
+			attachment: gateway.ChatAttachment{
+				Type:     "image",
+				MimeType: mimeType,
+				Content:  encoded,
+			},
+		}
+		return clipboardImageMsg{attachment: att}
+	}
 }
 
 // resizeInput adjusts the textarea height based on content (min 3, max 10 lines).
