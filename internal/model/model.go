@@ -209,6 +209,15 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.KeyMsg:
 		return m.handleKey(msg)
 
+	case tea.MouseMsg:
+		// Forward mouse events (scroll wheel) to the viewport
+		var cmd tea.Cmd
+		m.viewport, cmd = m.viewport.Update(msg)
+		if cmd != nil {
+			cmds = append(cmds, cmd)
+		}
+		return m, tea.Batch(cmds...)
+
 	case tea.WindowSizeMsg:
 		m.width = msg.Width
 		m.height = msg.Height
@@ -430,6 +439,18 @@ func (m *Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.autocompleteActive = false
 			return m, nil
 		}
+	case "pgup":
+		m.viewport.HalfPageUp()
+		return m, nil
+	case "pgdown":
+		m.viewport.HalfPageDown()
+		return m, nil
+	case "home":
+		m.viewport.GotoTop()
+		return m, nil
+	case "end":
+		m.viewport.GotoBottom()
+		return m, nil
 	}
 
 	var cmd tea.Cmd
