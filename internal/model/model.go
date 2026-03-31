@@ -444,6 +444,7 @@ func (m *Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 var slashCommands = []string{
 	"help", "exit", "quit", "new", "reset", "abort", "status",
 	"model", "models", "agent", "agents", "session", "sessions", "think",
+	"config", "clear",
 }
 
 func (m *Model) updateAutocomplete() {
@@ -663,6 +664,25 @@ func (m *Model) handleCommand(raw string) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		return m, m.patchThinking(args)
+
+	case "clear":
+		m.messages = nil
+		m.updateViewport()
+		return m, nil
+
+	case "config":
+		lines := []string{
+			"Config",
+			fmt.Sprintf("  file:     %s", config.DefaultConfigPath()),
+			fmt.Sprintf("  url:      %s", m.cfg.URL),
+			fmt.Sprintf("  theme:    %s", orDefault(m.cfg.Theme, "dark")),
+			fmt.Sprintf("  session:  %s", orDefault(m.cfg.Session, "(auto)")),
+		}
+		if m.cfg.Token != "" {
+			lines = append(lines, fmt.Sprintf("  token:    %s…", m.cfg.Token[:min(8, len(m.cfg.Token))]))
+		}
+		m.addSystem(strings.Join(lines, "\n"))
+		return m, nil
 
 	default:
 		// Unknown /command → send as chat message (gateway-registered commands)
@@ -1276,10 +1296,17 @@ func formatStatus(raw json.RawMessage) string {
 	return strings.Join(lines, "\n")
 }
 
+func orDefault(s, def string) string {
+	if s == "" {
+		return def
+	}
+	return s
+}
+
 func helpText() string {
 	return `Slash commands:
   /help              Show this help
-  /status            Show gateway status
+  /status            Gateway status
   /agent <id>        Switch agent
   /agents            List agents
   /session <key>     Switch session
@@ -1289,12 +1316,16 @@ func helpText() string {
   /think <level>     Set thinking level
   /new               New session
   /reset             Reset session
+  /clear             Clear chat display
   /abort             Abort active run
+  /config            Show config info
   /exit              Exit
 
 Keyboard:
   Enter              Send message
-  Alt+Enter          Newline
-  Ctrl+C             Clear/exit
-  Ctrl+D             Exit`
+  Tab                Accept autocomplete
+  ↑/↓                Navigate autocomplete/overlay
+  Escape             Dismiss popup
+  Ctrl+C             Clear input / double-tap to exit
+  Ctrl+D             Exit immediately`
 }
