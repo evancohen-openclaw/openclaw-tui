@@ -30,9 +30,16 @@ type EventFrame struct {
 }
 
 // ChallengeFrame is the first message from server after WS open.
+// It arrives as: {"type":"event","event":"connect.challenge","payload":{"nonce":"…","ts":…}}
 type ChallengeFrame struct {
-	Type  string `json:"type"` // "challenge"
+	Type    string           `json:"type"`    // "event"
+	Event   string           `json:"event"`   // "connect.challenge"
+	Payload ChallengePayload `json:"payload"`
+}
+
+type ChallengePayload struct {
 	Nonce string `json:"nonce"`
+	Ts    int64  `json:"ts"`
 }
 
 // ErrorShape is the error object in a response.

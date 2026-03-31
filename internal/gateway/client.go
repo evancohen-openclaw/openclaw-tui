@@ -137,7 +137,7 @@ func (c *Client) connectAndRun() error {
 		c.mu.Unlock()
 	}()
 
-	// Read challenge
+	// Read challenge event
 	_, msg, err := conn.ReadMessage()
 	if err != nil {
 		return fmt.Errorf("read challenge: %w", err)
@@ -147,8 +147,8 @@ func (c *Client) connectAndRun() error {
 	if err := json.Unmarshal(msg, &challenge); err != nil {
 		return fmt.Errorf("parse challenge: %w", err)
 	}
-	if challenge.Type != "challenge" {
-		return fmt.Errorf("expected challenge, got %q", challenge.Type)
+	if challenge.Type != "event" || challenge.Event != "connect.challenge" {
+		return fmt.Errorf("expected connect.challenge event, got type=%q event=%q", challenge.Type, challenge.Event)
 	}
 
 	// Send connect
