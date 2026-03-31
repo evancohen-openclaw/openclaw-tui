@@ -98,12 +98,19 @@ type HelloPolicy struct {
 // --- RPC param/result types ---
 
 type ChatSendParams struct {
-	SessionKey     string `json:"sessionKey"`
-	Message        string `json:"message"`
-	Thinking       string `json:"thinking,omitempty"`
-	Deliver        bool   `json:"deliver,omitempty"`
-	TimeoutMs      int    `json:"timeoutMs,omitempty"`
-	IdempotencyKey string `json:"idempotencyKey,omitempty"`
+	SessionKey     string            `json:"sessionKey"`
+	Message        string            `json:"message"`
+	Thinking       string            `json:"thinking,omitempty"`
+	Deliver        bool              `json:"deliver,omitempty"`
+	TimeoutMs      int               `json:"timeoutMs,omitempty"`
+	IdempotencyKey string            `json:"idempotencyKey,omitempty"`
+	Attachments    []ChatAttachment  `json:"attachments,omitempty"`
+}
+
+type ChatAttachment struct {
+	Type     string `json:"type"`               // "image"
+	MimeType string `json:"mimeType"`           // "image/png", "image/jpeg", etc.
+	Content  string `json:"content"`            // base64-encoded data (no data: prefix)
 }
 
 type ChatAbortParams struct {

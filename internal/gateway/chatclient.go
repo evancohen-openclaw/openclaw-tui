@@ -17,12 +17,13 @@ func NewChatClient(wsURL, token, password, version, configDir string, tlsInsecur
 	}
 }
 
-// SendChat sends a message to a session.
-func (c *ChatClient) SendChat(sessionKey, message, runID string) error {
+// SendChat sends a message to a session, optionally with attachments.
+func (c *ChatClient) SendChat(sessionKey, message, runID string, attachments []ChatAttachment) error {
 	params := ChatSendParams{
 		SessionKey:     sessionKey,
 		Message:        message,
 		IdempotencyKey: runID,
+		Attachments:    attachments,
 	}
 	_, err := c.Request("chat.send", params)
 	return err

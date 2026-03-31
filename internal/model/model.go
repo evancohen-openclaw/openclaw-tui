@@ -1,8 +1,12 @@
 package model
 
 import (
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"mime"
+	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -637,7 +641,21 @@ func (m *Model) handleSubmit(text string) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 
-	m.addUser(text)
+	// Extract file attachments from the message
+	message, attachments := m.extractAttachments(text)
+
+	if message == "" && len(attachments) > 0 {
+		message = fmt.Sprintf("[%d file(s) attached]", len(attachments))
+	}
+
+	displayText := message
+	if len(attachments) > 0 {
+		for _, a := range attachments {
+			displayText += fmt.Sprintf("\n📎 %s", a.name)
+		}
+	}
+	m.addUser(displayText)
+
 	runID := uuid.New().String()
 	m.activeRunID = runID
 	m.localRunIDs[runID] = true
@@ -645,7 +663,12 @@ func (m *Model) handleSubmit(text string) (tea.Model, tea.Cmd) {
 	now := time.Now()
 	m.runStartedAt = &now
 
-	return m, m.sendChat(text, runID)
+	var chatAttachments []gateway.ChatAttachment
+	for _, a := range attachments {
+		chatAttachments = append(chatAttachments, a.attachment)
+	}
+
+	return m, m.sendChat(message, runID, chatAttachments)
 }
 
 func (m *Model) handleCommand(raw string) (tea.Model, tea.Cmd) {
@@ -830,7 +853,7 @@ func (m *Model) handleCommand(raw string) (tea.Model, tea.Cmd) {
 		m.activityStatus = actSending
 		now := time.Now()
 		m.runStartedAt = &now
-		return m, m.sendChat(raw, runID)
+		return m, m.sendChat(raw, runID, nil)
 	}
 }
 
@@ -1192,11 +1215,11 @@ func (m *Model) formatSessionKey() string {
 
 // --- RPC command wrappers (return tea.Cmd) ---
 
-func (m *Model) sendChat(text, runID string) tea.Cmd {
+func (m *Model) sendChat(text, runID string, attachments []gateway.ChatAttachment) tea.Cmd {
 	client := m.client
 	sessionKey := m.currentSessionKey
 	return func() tea.Msg {
-		err := client.SendChat(sessionKey, text, runID)
+		err := client.SendChat(sessionKey, text, runID, attachments)
 		return gateway.ChatSentMsg{RunID: runID, Err: err}
 	}
 }
@@ -1520,6 +1543,108 @@ func formatStatus(raw json.RawMessage) string {
 		}
 	}
 	return strings.Join(lines, "\n")
+}
+
+type pendingAttachment struct {
+	name       string
+	attachment gateway.ChatAttachment
+}
+
+// extractAttachments scans the message for file paths and loads them as attachments.
+// Returns the cleaned message text and any attachments found.
+func (m *Model) extractAttachments(text string) (string, []pendingAttachment) {
+	var attachments []pendingAttachment
+	var cleanedLines []string
+
+	lines := strings.Split(text, "\n")
+	for _, line := range lines {
+		trimmed := strings.TrimSpace(line)
+
+		// Check if the line is a file path (starts with / or ~/ or ./)
+		if isFilePath(trimmed) {
+			expanded := expandPath(trimmed)
+			att, err := loadFileAttachment(expanded)
+			if err != nil {
+				m.addSystem(fmt.Sprintf("failed to attach %s: %v", trimmed, err))
+				cleanedLines = append(cleanedLines, line)
+				continue
+			}
+			attachments = append(attachments, *att)
+		} else {
+			cleanedLines = append(cleanedLines, line)
+		}
+	}
+
+	return strings.TrimSpace(strings.Join(cleanedLines, "\n")), attachments
+}
+
+func isFilePath(s string) bool {
+	if s == "" {
+		return false
+	}
+	// Must look like a file path
+	if !strings.HasPrefix(s, "/") && !strings.HasPrefix(s, "~/") && !strings.HasPrefix(s, "./") {
+		return false
+	}
+	// Must have a supported extension
+	ext := strings.ToLower(filepath.Ext(s))
+	switch ext {
+	case ".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp", ".svg":
+		return true
+	}
+	return false
+}
+
+func expandPath(p string) string {
+	if strings.HasPrefix(p, "~/") {
+		home, _ := os.UserHomeDir()
+		return filepath.Join(home, p[2:])
+	}
+	return p
+}
+
+func loadFileAttachment(path string) (*pendingAttachment, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil, err
+	}
+
+	// 20MB limit
+	if len(data) > 20*1024*1024 {
+		return nil, fmt.Errorf("file too large (%d MB, max 20MB)", len(data)/1024/1024)
+	}
+
+	ext := strings.ToLower(filepath.Ext(path))
+	mimeType := mime.TypeByExtension(ext)
+	if mimeType == "" {
+		switch ext {
+		case ".png":
+			mimeType = "image/png"
+		case ".jpg", ".jpeg":
+			mimeType = "image/jpeg"
+		case ".gif":
+			mimeType = "image/gif"
+		case ".webp":
+			mimeType = "image/webp"
+		case ".bmp":
+			mimeType = "image/bmp"
+		case ".svg":
+			mimeType = "image/svg+xml"
+		default:
+			mimeType = "application/octet-stream"
+		}
+	}
+
+	encoded := base64.StdEncoding.EncodeToString(data)
+
+	return &pendingAttachment{
+		name: filepath.Base(path),
+		attachment: gateway.ChatAttachment{
+			Type:     "image",
+			MimeType: mimeType,
+			Content:  encoded,
+		},
+	}, nil
 }
 
 // resizeInput adjusts the textarea height based on content (min 3, max 10 lines).
