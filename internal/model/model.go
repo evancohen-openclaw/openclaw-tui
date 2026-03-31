@@ -133,7 +133,7 @@ func New(cfg config.Config) Model {
 
 	sp := spinner.New()
 	sp.Spinner = spinner.Dot
-	sp.Style = lipgloss.NewStyle().Foreground(lipgloss.Color("#F6C453"))
+	sp.Style = lipgloss.NewStyle().Foreground(lipgloss.Color("#A78BFA"))
 
 	eventCh := make(chan tea.Msg, 100)
 

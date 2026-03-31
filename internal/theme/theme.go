@@ -71,25 +71,25 @@ type Palette struct {
 }
 
 var DarkPalette = Palette{
-	Text:            "#E8E3D5",
-	Dim:             "#7B7F87",
-	Accent:          "#F6C453",
-	AccentSoft:      "#F2A65A",
-	Border:          "#3C414B",
-	UserBg:          "#2B2F36",
-	UserText:        "#F3EEE0",
-	SystemText:      "#9BA3B2",
-	ToolPendingBg:   "#1F2A2F",
-	ToolSuccessBg:   "#1E2D23",
-	ToolErrorBg:     "#2F1F1F",
-	ToolTitle:       "#F6C453",
-	ToolOutput:      "#E1DACB",
-	Error:           "#F97066",
-	Success:         "#7DD3A5",
-	ThinkingText:    "#7B7F87",
-	ThinkingBorder:  "#3C414B",
-	OverlayBg:       "#1E2024",
-	OverlayActiveBg: "#2B2F36",
+	Text:            "#D4D4D4",
+	Dim:             "#6B7280",
+	Accent:          "#A78BFA", // soft lavender
+	AccentSoft:      "#818CF8", // muted indigo
+	Border:          "#2E3440",
+	UserBg:          "#1E293B", // deep slate
+	UserText:        "#E2E8F0",
+	SystemText:      "#64748B",
+	ToolPendingBg:   "#1A2332",
+	ToolSuccessBg:   "#162321",
+	ToolErrorBg:     "#2D1B1B",
+	ToolTitle:       "#A78BFA",
+	ToolOutput:      "#CBD5E1",
+	Error:           "#F87171",
+	Success:         "#6EE7B7",
+	ThinkingText:    "#64748B",
+	ThinkingBorder:  "#334155",
+	OverlayBg:       "#0F172A",
+	OverlayActiveBg: "#1E293B",
 }
 
 var LightPalette = Palette{
