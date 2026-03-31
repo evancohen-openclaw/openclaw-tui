@@ -475,8 +475,8 @@ func (m *Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			}
 			return m, nil
 		}
-	case "ctrl+v":
-		// Try clipboard image first, fall through to normal paste if no image
+	case "alt+v":
+		// Paste image from clipboard
 		return m, m.pasteClipboardImage()
 	case "ctrl+l":
 		// Model picker (matches official TUI)
