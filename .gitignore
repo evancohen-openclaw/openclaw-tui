@@ -1,5 +1,7 @@
-# Binary
+# Binaries
 openclaw-tui
+openclaw-tui.exe
+openclaw-tui-linux
 
 # OS
 .DS_Store
