@@ -7,6 +7,7 @@ import (
 
 	"charm.land/bubbles/v2/viewport"
 	tea "charm.land/bubbletea/v2"
+	glamour "charm.land/glamour/v2"
 	"charm.land/lipgloss/v2"
 )
 
@@ -20,14 +21,29 @@ func (m Model) View() tea.View {
 	status := m.renderStatus()
 	input := m.input.View()
 
-	v := tea.NewView(lipgloss.JoinVertical(
+	// Build the main layout
+	mainView := lipgloss.JoinVertical(
 		lipgloss.Left,
 		header,
 		m.viewport.View(),
 		status,
 		footer,
-		input,
-	))
+	)
+
+	// Add autocomplete popup between main view and input
+	autocomplete := m.renderAutocomplete()
+	if autocomplete != "" {
+		mainView = lipgloss.JoinVertical(lipgloss.Left, mainView, autocomplete, input)
+	} else {
+		mainView = lipgloss.JoinVertical(lipgloss.Left, mainView, input)
+	}
+
+	// Overlay on top if active
+	if m.overlayActive {
+		mainView = m.renderWithOverlay(mainView)
+	}
+
+	v := tea.NewView(mainView)
 	v.AltScreen = true
 	return v
 }
@@ -166,16 +182,36 @@ func (m Model) renderMessage(msg chatMessage) string {
 		style := m.theme.UserMsg.Width(w)
 		return "\n" + style.Render(msg.content)
 
-	case "assistant", "assistant-stream":
+	case "assistant":
+		// Render final assistant messages through glamour for markdown
+		rendered := m.renderMarkdown(msg.content, w)
 		style := m.theme.AssistantMsg.Width(w)
-		content := msg.content
-		if msg.role == "assistant-stream" {
-			content += " ▌" // cursor indicator for streaming
-		}
+		return "\n" + style.Render(rendered)
+
+	case "assistant-stream":
+		// Streaming messages stay raw for performance
+		style := m.theme.AssistantMsg.Width(w)
+		content := msg.content + " ▌"
 		return "\n" + style.Render(content)
+
+	case "thinking":
+		style := m.theme.Thinking.Width(w - 4)
+		return "\n" + style.Render(msg.content)
 
 	case "system":
 		return " " + m.theme.System.Render(msg.content)
+
+	case "tool-pending":
+		style := m.theme.ToolPending.Width(w)
+		return " " + style.Render(msg.content)
+
+	case "tool-success":
+		style := m.theme.ToolSuccess.Width(w)
+		return " " + style.Render(msg.content)
+
+	case "tool-error":
+		style := m.theme.ToolError.Width(w)
+		return " " + style.Render(msg.content)
 
 	case "tool":
 		style := m.theme.ToolSuccess.Width(w)
@@ -184,6 +220,145 @@ func (m Model) renderMessage(msg chatMessage) string {
 	default:
 		return " " + msg.content
 	}
+}
+
+// renderMarkdown renders content as styled markdown using glamour.
+func (m Model) renderMarkdown(content string, width int) string {
+	if strings.TrimSpace(content) == "" {
+		return content
+	}
+
+	styleName := "dark"
+	if m.theme.Light {
+		styleName = "light"
+	}
+
+	r, err := glamour.NewTermRenderer(
+		glamour.WithStandardStyle(styleName),
+		glamour.WithWordWrap(width),
+	)
+	if err != nil {
+		return content
+	}
+
+	rendered, err := r.Render(content)
+	if err != nil {
+		return content
+	}
+
+	return strings.TrimRight(rendered, "\n")
+}
+
+// renderAutocomplete renders the autocomplete popup above the input.
+func (m Model) renderAutocomplete() string {
+	if !m.autocompleteActive || len(m.autocompleteSuggs) == 0 {
+		return ""
+	}
+
+	var lines []string
+	for i, cmd := range m.autocompleteSuggs {
+		label := "/" + cmd
+		if i == m.autocompleteIndex {
+			lines = append(lines, m.theme.AutocompleteItemActive.Render(label))
+		} else {
+			lines = append(lines, m.theme.AutocompleteItem.Render(label))
+		}
+	}
+
+	return strings.Join(lines, "\n")
+}
+
+// renderWithOverlay renders the overlay picker on top of the main view.
+func (m Model) renderWithOverlay(base string) string {
+	if len(m.overlayItems) == 0 {
+		return base
+	}
+
+	// Build overlay content
+	title := m.theme.OverlayTitle.Render(fmt.Sprintf("Select %s", m.overlayType))
+	hint := m.theme.Dim.Render("↑/↓ navigate • enter select • esc cancel")
+
+	var items []string
+	for i, item := range m.overlayItems {
+		label := item.title
+		if item.description != "" && item.description != item.title {
+			label += m.theme.Dim.Render(" — " + item.description)
+		}
+		if i == m.overlayIndex {
+			items = append(items, m.theme.OverlayItemActive.Render("> "+label))
+		} else {
+			items = append(items, m.theme.OverlayItem.Render("  "+label))
+		}
+	}
+
+	overlayContent := title + "\n" + hint + "\n\n" + strings.Join(items, "\n")
+
+	overlayWidth := m.width * 2 / 3
+	if overlayWidth < 40 {
+		overlayWidth = 40
+	}
+	if overlayWidth > m.width-4 {
+		overlayWidth = m.width - 4
+	}
+
+	overlay := m.theme.OverlayBorder.Width(overlayWidth).Render(overlayContent)
+
+	// Center the overlay on the base
+	return placeOverlay(m.width, m.height, overlay, base)
+}
+
+// placeOverlay centers an overlay on top of a base string.
+func placeOverlay(width, height int, overlay, base string) string {
+	overlayLines := strings.Split(overlay, "\n")
+	baseLines := strings.Split(base, "\n")
+
+	// Pad base to fill height
+	for len(baseLines) < height {
+		baseLines = append(baseLines, "")
+	}
+
+	overlayH := len(overlayLines)
+	overlayW := 0
+	for _, line := range overlayLines {
+		l := lipgloss.Width(line)
+		if l > overlayW {
+			overlayW = l
+		}
+	}
+
+	// Calculate centering
+	startY := (height - overlayH) / 2
+	if startY < 0 {
+		startY = 0
+	}
+	startX := (width - overlayW) / 2
+	if startX < 0 {
+		startX = 0
+	}
+
+	// Merge overlay onto base
+	for i, overlayLine := range overlayLines {
+		y := startY + i
+		if y >= len(baseLines) {
+			break
+		}
+
+		baseLine := baseLines[y]
+		// Pad base line to startX
+		baseRunes := []rune(baseLine)
+		for len(baseRunes) < startX {
+			baseRunes = append(baseRunes, ' ')
+		}
+
+		// Replace portion with overlay
+		overlayRunes := []rune(overlayLine)
+		result := make([]rune, 0, startX+len(overlayRunes))
+		result = append(result, baseRunes[:startX]...)
+		result = append(result, overlayRunes...)
+		baseLines[y] = string(result)
+	}
+
+	return strings.Join(baseLines[:height], "\n")
 }
 
 func (m Model) formatTokens() string {

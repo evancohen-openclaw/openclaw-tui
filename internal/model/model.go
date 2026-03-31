@@ -72,6 +72,17 @@ type Model struct {
 	localRunIDs  map[string]bool
 	runStartedAt *time.Time
 
+	// Overlay picker state
+	overlayActive bool
+	overlayType   string // "agents", "models", "sessions"
+	overlayItems  []overlayItem
+	overlayIndex  int
+
+	// Autocomplete state
+	autocompleteActive bool
+	autocompleteSuggs  []string
+	autocompleteIndex  int
+
 	// Event channel
 	eventCh chan tea.Msg
 
@@ -79,13 +90,27 @@ type Model struct {
 	lastCtrlC time.Time
 }
 
+type overlayItem struct {
+	id          string
+	title       string
+	description string
+}
+
 type chatMessage struct {
-	role    string // "user", "assistant", "system", "tool"
-	content string
+	role       string // "user", "assistant", "system", "tool-pending", "tool-success", "tool-error", "assistant-stream", "thinking"
+	content    string
+	toolCallID string // for tool messages, used to find/update them
 }
 
 // tickMsg drives periodic updates (elapsed timer, etc.)
 type tickMsg time.Time
+
+// overlayReadyMsg signals that overlay data has been fetched.
+type overlayReadyMsg struct {
+	overlayType string
+	items       []overlayItem
+	err         error
+}
 
 func doTick() tea.Cmd {
 	return tea.Tick(time.Second, func(t time.Time) tea.Msg {
@@ -298,6 +323,19 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.addSystem(strings.Join(lines, "\n"))
 		}
 		return m, tea.Batch(cmds...)
+
+	case overlayReadyMsg:
+		if msg.err != nil {
+			m.addSystem(fmt.Sprintf("%s list failed: %v", msg.overlayType, msg.err))
+		} else if len(msg.items) > 0 {
+			m.overlayActive = true
+			m.overlayType = msg.overlayType
+			m.overlayItems = msg.items
+			m.overlayIndex = 0
+		} else {
+			m.addSystem(fmt.Sprintf("no %s found", msg.overlayType))
+		}
+		return m, tea.Batch(cmds...)
 	}
 
 	// Update sub-components
@@ -316,26 +354,172 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 }
 
 func (m *Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	// Overlay takes priority over all other input
+	if m.overlayActive {
+		return m.handleOverlayKey(msg)
+	}
+
 	switch msg.String() {
 	case "ctrl+c":
+		if m.autocompleteActive {
+			m.autocompleteActive = false
+			return m, nil
+		}
 		return m.handleCtrlC()
 	case "ctrl+d":
 		m.client.Stop()
 		return m, tea.Quit
+	case "tab":
+		if m.autocompleteActive && len(m.autocompleteSuggs) > 0 {
+			// Complete the selected suggestion
+			m.input.Reset()
+			m.input.SetValue("/" + m.autocompleteSuggs[m.autocompleteIndex] + " ")
+			m.autocompleteActive = false
+			return m, nil
+		}
 	case "enter":
+		if m.autocompleteActive && len(m.autocompleteSuggs) > 0 {
+			// Complete and submit if no args needed, otherwise just complete
+			m.input.Reset()
+			m.input.SetValue("/" + m.autocompleteSuggs[m.autocompleteIndex])
+			m.autocompleteActive = false
+			// Submit it
+			text := strings.TrimSpace(m.input.Value())
+			if text != "" {
+				m.input.Reset()
+				return m.handleSubmit(text)
+			}
+			return m, nil
+		}
 		if m.input.Focused() {
 			text := strings.TrimSpace(m.input.Value())
 			if text == "" {
 				return m, nil
 			}
 			m.input.Reset()
+			m.autocompleteActive = false
 			return m.handleSubmit(text)
+		}
+	case "up":
+		if m.autocompleteActive && len(m.autocompleteSuggs) > 0 {
+			m.autocompleteIndex--
+			if m.autocompleteIndex < 0 {
+				m.autocompleteIndex = len(m.autocompleteSuggs) - 1
+			}
+			return m, nil
+		}
+	case "down":
+		if m.autocompleteActive && len(m.autocompleteSuggs) > 0 {
+			m.autocompleteIndex++
+			if m.autocompleteIndex >= len(m.autocompleteSuggs) {
+				m.autocompleteIndex = 0
+			}
+			return m, nil
+		}
+	case "escape":
+		if m.autocompleteActive {
+			m.autocompleteActive = false
+			return m, nil
 		}
 	}
 
 	var cmd tea.Cmd
 	m.input, cmd = m.input.Update(msg)
+
+	// Update autocomplete based on current input
+	m.updateAutocomplete()
+
 	return m, cmd
+}
+
+var slashCommands = []string{
+	"help", "exit", "quit", "new", "reset", "abort", "status",
+	"model", "models", "agent", "agents", "session", "sessions", "think",
+}
+
+func (m *Model) updateAutocomplete() {
+	val := m.input.Value()
+	if !strings.HasPrefix(val, "/") || strings.Contains(val, " ") {
+		m.autocompleteActive = false
+		return
+	}
+
+	prefix := strings.ToLower(strings.TrimPrefix(val, "/"))
+	if prefix == "" {
+		// Show all commands
+		m.autocompleteSuggs = slashCommands
+		m.autocompleteActive = true
+		m.autocompleteIndex = 0
+		return
+	}
+
+	var matches []string
+	for _, cmd := range slashCommands {
+		if strings.HasPrefix(cmd, prefix) {
+			matches = append(matches, cmd)
+		}
+	}
+
+	if len(matches) == 0 {
+		m.autocompleteActive = false
+		return
+	}
+
+	m.autocompleteSuggs = matches
+	m.autocompleteActive = true
+	if m.autocompleteIndex >= len(matches) {
+		m.autocompleteIndex = 0
+	}
+}
+
+func (m *Model) handleOverlayKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	switch msg.String() {
+	case "escape", "ctrl+c":
+		m.overlayActive = false
+		return m, nil
+	case "up", "k":
+		if m.overlayIndex > 0 {
+			m.overlayIndex--
+		}
+		return m, nil
+	case "down", "j":
+		if m.overlayIndex < len(m.overlayItems)-1 {
+			m.overlayIndex++
+		}
+		return m, nil
+	case "enter":
+		if len(m.overlayItems) == 0 {
+			m.overlayActive = false
+			return m, nil
+		}
+		selected := m.overlayItems[m.overlayIndex]
+		m.overlayActive = false
+		return m.handleOverlaySelect(selected)
+	}
+	return m, nil
+}
+
+func (m *Model) handleOverlaySelect(item overlayItem) (tea.Model, tea.Cmd) {
+	switch m.overlayType {
+	case "agents":
+		m.currentAgentID = item.id
+		m.currentSessionKey = m.resolveSessionKey("")
+		m.messages = nil
+		m.assembler.Reset()
+		m.addSystem(fmt.Sprintf("switched to agent: %s", item.id))
+		return m, m.loadHistory()
+	case "models":
+		m.addSystem(fmt.Sprintf("switching model to %s", item.id))
+		return m, m.patchModel(item.id)
+	case "sessions":
+		m.currentSessionKey = m.resolveSessionKey(item.id)
+		m.messages = nil
+		m.assembler.Reset()
+		m.activeRunID = ""
+		m.addSystem(fmt.Sprintf("switched to session: %s", item.title))
+		return m, m.loadHistory()
+	}
+	return m, nil
 }
 
 func (m *Model) handleCtrlC() (tea.Model, tea.Cmd) {
@@ -433,7 +617,7 @@ func (m *Model) handleCommand(raw string) (tea.Model, tea.Cmd) {
 		return m, m.patchModel(args)
 
 	case "models":
-		return m, m.fetchModels()
+		return m, m.fetchModelsOverlay()
 
 	case "agent":
 		if args == "" {
@@ -448,7 +632,7 @@ func (m *Model) handleCommand(raw string) (tea.Model, tea.Cmd) {
 		return m, m.loadHistory()
 
 	case "agents":
-		return m, m.fetchAgentsList()
+		return m, m.fetchAgentsOverlay()
 
 	case "session":
 		if args == "" {
@@ -462,7 +646,7 @@ func (m *Model) handleCommand(raw string) (tea.Model, tea.Cmd) {
 		return m, m.loadHistory()
 
 	case "sessions":
-		return m, m.fetchSessionsList()
+		return m, m.fetchSessionsOverlay()
 
 	case "think":
 		if args == "" {
@@ -544,8 +728,8 @@ func (m *Model) handleChatEvent(evt gateway.ChatEventPayload) {
 }
 
 func (m *Model) handleAgentEvent(evt gateway.AgentEventPayload) {
-	// For now, just track lifecycle for status display
-	if evt.Stream == "lifecycle" {
+	switch evt.Stream {
+	case "lifecycle":
 		var data struct {
 			Phase string `json:"phase"`
 		}
@@ -554,7 +738,6 @@ func (m *Model) handleAgentEvent(evt gateway.AgentEventPayload) {
 			case "start":
 				m.activityStatus = actRunning
 			case "end":
-				// Don't override if we're streaming
 				if m.activityStatus == actRunning {
 					m.activityStatus = actIdle
 				}
@@ -562,7 +745,86 @@ func (m *Model) handleAgentEvent(evt gateway.AgentEventPayload) {
 				m.activityStatus = actError
 			}
 		}
+
+	case "tool":
+		var tool gateway.ToolEventData
+		if err := json.Unmarshal(evt.Data, &tool); err != nil {
+			return
+		}
+		m.handleToolEvent(tool)
+		m.updateViewport()
 	}
+}
+
+func (m *Model) handleToolEvent(tool gateway.ToolEventData) {
+	switch tool.Phase {
+	case "start":
+		args := truncate(string(tool.Args), 80)
+		content := fmt.Sprintf("⚙ %s(%s)", tool.Name, args)
+		m.messages = append(m.messages, chatMessage{
+			role:       "tool-pending",
+			content:    content,
+			toolCallID: tool.ToolCallID,
+		})
+
+	case "update":
+		partial := truncate(string(tool.PartialResult), 200)
+		content := fmt.Sprintf("⚙ %s: %s", tool.Name, partial)
+		m.updateToolMessage(tool.ToolCallID, "tool-pending", content)
+
+	case "result":
+		if tool.IsError {
+			output := truncate(string(tool.Result), 400)
+			content := fmt.Sprintf("✗ %s: %s", tool.Name, output)
+			m.updateToolMessage(tool.ToolCallID, "tool-error", content)
+		} else {
+			output := truncateLines(string(tool.Result), 10)
+			content := fmt.Sprintf("✓ %s: %s", tool.Name, output)
+			m.updateToolMessage(tool.ToolCallID, "tool-success", content)
+		}
+	}
+}
+
+func (m *Model) updateToolMessage(toolCallID, role, content string) {
+	for i := len(m.messages) - 1; i >= 0; i-- {
+		if m.messages[i].toolCallID == toolCallID {
+			m.messages[i].role = role
+			m.messages[i].content = content
+			return
+		}
+	}
+	// Not found, append
+	m.messages = append(m.messages, chatMessage{role: role, content: content, toolCallID: toolCallID})
+}
+
+func truncate(s string, maxLen int) string {
+	// Clean up JSON quoting for display
+	s = strings.TrimSpace(s)
+	if len(s) > 2 && s[0] == '"' && s[len(s)-1] == '"' {
+		var unquoted string
+		if err := json.Unmarshal([]byte(s), &unquoted); err == nil {
+			s = unquoted
+		}
+	}
+	if len(s) > maxLen {
+		return s[:maxLen] + "…"
+	}
+	return s
+}
+
+func truncateLines(s string, maxLines int) string {
+	s = strings.TrimSpace(s)
+	if len(s) > 2 && s[0] == '"' && s[len(s)-1] == '"' {
+		var unquoted string
+		if err := json.Unmarshal([]byte(s), &unquoted); err == nil {
+			s = unquoted
+		}
+	}
+	lines := strings.Split(s, "\n")
+	if len(lines) > maxLines {
+		lines = append(lines[:maxLines], fmt.Sprintf("… (%d more lines)", len(lines)-maxLines))
+	}
+	return strings.Join(lines, "\n")
 }
 
 // --- Message management ---
@@ -592,6 +854,28 @@ func (m *Model) updateAssistant(runID string, text string) {
 }
 
 func (m *Model) finalizeAssistant(runID string, text string) {
+	// If thinking is enabled and there's thinking text, insert a thinking block
+	if m.assembler.ShowThinking {
+		thinkingText := m.assembler.GetThinking(runID)
+		if strings.TrimSpace(thinkingText) != "" {
+			// Strip the thinking prefix from the display text since we show it separately
+			// The compose() function already put it in text, so we need the raw content only
+			// Actually, compose() already included it. We want to show thinking in its own block.
+			// So we insert a thinking message before the assistant message.
+			// Find where to insert (before the streaming message or at end)
+			insertIdx := len(m.messages)
+			for i := len(m.messages) - 1; i >= 0; i-- {
+				if m.messages[i].role == "assistant-stream" {
+					insertIdx = i
+					break
+				}
+			}
+			thinkMsg := chatMessage{role: "thinking", content: thinkingText}
+			// Insert thinking before the streaming message
+			m.messages = append(m.messages[:insertIdx], append([]chatMessage{thinkMsg}, m.messages[insertIdx:]...)...)
+		}
+	}
+
 	// Replace streaming message with final, or add new
 	for i := len(m.messages) - 1; i >= 0; i-- {
 		if m.messages[i].role == "assistant-stream" {
@@ -628,6 +912,7 @@ func (m *Model) applyHistory(result *gateway.ChatHistoryResult) {
 
 	if result.ThinkingLevel != "" {
 		m.thinkingLevel = result.ThinkingLevel
+		m.assembler.ShowThinking = m.thinkingLevel != "" && m.thinkingLevel != "off"
 	}
 
 	m.addSystem(fmt.Sprintf("session %s", m.formatSessionKey()))
@@ -675,6 +960,7 @@ func (m *Model) applySessionInfo(result *gateway.SessionsListResult) {
 			}
 			if s.ThinkingLevel != "" {
 				m.thinkingLevel = s.ThinkingLevel
+				m.assembler.ShowThinking = m.thinkingLevel != "" && m.thinkingLevel != "off"
 			}
 			m.totalTokens = s.TotalTokens
 			m.contextTokens = s.ContextTokens
@@ -767,32 +1053,30 @@ func (m *Model) fetchAgents() tea.Cmd {
 	}
 }
 
-func (m *Model) fetchAgentsList() tea.Cmd {
+func (m *Model) fetchAgentsOverlay() tea.Cmd {
 	client := m.client
 	return func() tea.Msg {
 		result, err := client.ListAgents()
 		if err != nil {
-			return gateway.AgentsListMsg{Err: err}
+			return overlayReadyMsg{overlayType: "agents", err: err}
 		}
-		// Format as system message for now (overlay picker in Phase 2)
-		var lines []string
-		lines = append(lines, "Available agents:")
+		var items []overlayItem
 		for _, a := range result.Agents {
 			name := a.Name
 			if name == "" {
 				name = a.ID
 			}
-			def := ""
+			desc := a.ID
 			if a.ID == result.DefaultID {
-				def = " (default)"
+				desc += " (default)"
 			}
-			lines = append(lines, fmt.Sprintf("  %s — %s%s", a.ID, name, def))
+			items = append(items, overlayItem{id: a.ID, title: name, description: desc})
 		}
-		return gateway.StatusResultMsg{Payload: json.RawMessage(`"` + strings.Join(lines, "\n") + `"`)}
+		return overlayReadyMsg{overlayType: "agents", items: items}
 	}
 }
 
-func (m *Model) fetchSessionsList() tea.Cmd {
+func (m *Model) fetchSessionsOverlay() tea.Cmd {
 	client := m.client
 	agentID := m.currentAgentID
 	return func() tea.Msg {
@@ -802,10 +1086,9 @@ func (m *Model) fetchSessionsList() tea.Cmd {
 			AgentID:              agentID,
 		})
 		if err != nil {
-			return gateway.StatusResultMsg{Err: err}
+			return overlayReadyMsg{overlayType: "sessions", err: err}
 		}
-		var lines []string
-		lines = append(lines, "Sessions:")
+		var items []overlayItem
 		for _, s := range result.Sessions {
 			title := s.DerivedTitle
 			if title == "" {
@@ -818,13 +1101,37 @@ func (m *Model) fetchSessionsList() tea.Cmd {
 			if len(preview) > 60 {
 				preview = preview[:60] + "…"
 			}
-			line := fmt.Sprintf("  %s", title)
-			if preview != "" {
-				line += fmt.Sprintf(" — %s", preview)
+			// Extract session name from key for selection
+			sessionName := s.Key
+			if strings.HasPrefix(s.Key, "agent:") {
+				parts := strings.SplitN(s.Key, ":", 3)
+				if len(parts) == 3 {
+					sessionName = parts[2]
+				}
 			}
-			lines = append(lines, line)
+			items = append(items, overlayItem{id: sessionName, title: title, description: preview})
 		}
-		return gateway.StatusResultMsg{Payload: json.RawMessage(`"` + strings.ReplaceAll(strings.Join(lines, "\n"), `"`, `\"`) + `"`)}
+		return overlayReadyMsg{overlayType: "sessions", items: items}
+	}
+}
+
+func (m *Model) fetchModelsOverlay() tea.Cmd {
+	client := m.client
+	return func() tea.Msg {
+		result, err := client.ListModels()
+		if err != nil {
+			return overlayReadyMsg{overlayType: "models", err: err}
+		}
+		var items []overlayItem
+		for _, model := range result.Models {
+			id := model.Provider + "/" + model.ID
+			name := model.Name
+			if name == "" || name == model.ID {
+				name = id
+			}
+			items = append(items, overlayItem{id: id, title: name, description: id})
+		}
+		return overlayReadyMsg{overlayType: "models", items: items}
 	}
 }
 

@@ -7,7 +7,8 @@ import (
 
 // Assembler tracks per-run streaming state to compose display text.
 type Assembler struct {
-	runs map[string]*runState
+	runs         map[string]*runState
+	ShowThinking bool
 }
 
 type runState struct {
@@ -37,7 +38,7 @@ func (a *Assembler) IngestDelta(runID string, message json.RawMessage) string {
 	}
 
 	prev := state.DisplayText
-	state.DisplayText = compose(state.ThinkingText, state.ContentText, false)
+	state.DisplayText = compose(state.ThinkingText, state.ContentText, a.ShowThinking)
 
 	if state.DisplayText == prev || state.DisplayText == "" {
 		return ""
@@ -57,7 +58,7 @@ func (a *Assembler) Finalize(runID string, message json.RawMessage, errorMessage
 		state.ContentText = content
 	}
 
-	state.DisplayText = compose(state.ThinkingText, state.ContentText, false)
+	state.DisplayText = compose(state.ThinkingText, state.ContentText, a.ShowThinking)
 
 	finalText := state.DisplayText
 	if strings.TrimSpace(finalText) == "" {
@@ -82,6 +83,14 @@ func (a *Assembler) Drop(runID string) {
 // Reset clears all tracked runs.
 func (a *Assembler) Reset() {
 	a.runs = make(map[string]*runState)
+}
+
+// GetThinking returns the accumulated thinking text for a run, if any.
+func (a *Assembler) GetThinking(runID string) string {
+	if s, ok := a.runs[runID]; ok {
+		return s.ThinkingText
+	}
+	return ""
 }
 
 func (a *Assembler) getOrCreate(runID string) *runState {
