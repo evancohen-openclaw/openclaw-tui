@@ -4,7 +4,6 @@ import (
 	"crypto/tls"
 	"encoding/json"
 	"fmt"
-	"log"
 	"net/url"
 	"runtime"
 	"sync"
@@ -66,9 +65,7 @@ func (c *Client) Start() {
 
 		attempt++
 		err := c.connectAndRun()
-		if err != nil {
-			log.Printf("gateway: %v", err)
-		}
+		_ = err // error is passed through OnDisconnected callback
 
 		c.flushPending(fmt.Errorf("disconnected"))
 
