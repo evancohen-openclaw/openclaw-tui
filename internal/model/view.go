@@ -59,7 +59,10 @@ func (m *Model) updateLayout() {
 	headerH := 1
 	footerH := 1
 	statusH := 1
-	inputH := 3
+	inputH := m.input.Height()
+	if inputH < 3 {
+		inputH = 3
+	}
 
 	vpHeight := m.height - headerH - footerH - statusH - inputH
 	if vpHeight < 1 {
@@ -205,8 +208,15 @@ func (m Model) renderMessage(msg chatMessage) string {
 
 	switch msg.role {
 	case "user":
+		content := msg.content
+		lines := strings.Split(content, "\n")
+		if len(lines) > 8 {
+			content = strings.Join(lines[:4], "\n") +
+				fmt.Sprintf("\n… (%d lines collapsed) …\n", len(lines)-5) +
+				lines[len(lines)-1]
+		}
 		style := m.theme.UserMsg.Width(w)
-		return "\n" + style.Render(msg.content)
+		return "\n" + style.Render(content)
 
 	case "assistant":
 		// Render final assistant messages through glamour for markdown
@@ -225,7 +235,14 @@ func (m Model) renderMessage(msg chatMessage) string {
 		return "\n" + style.Render(msg.content)
 
 	case "system":
-		return " " + m.theme.System.Render(msg.content)
+		content := msg.content
+		lines := strings.Split(content, "\n")
+		if len(lines) > 6 {
+			content = strings.Join(lines[:3], "\n") +
+				fmt.Sprintf("\n… (%d lines collapsed) …\n", len(lines)-4) +
+				lines[len(lines)-1]
+		}
+		return " " + m.theme.System.Render(content)
 
 	case "tool-pending":
 		style := m.theme.ToolPending.Width(w)

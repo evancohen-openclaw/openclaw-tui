@@ -404,16 +404,20 @@ func (m *Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.autocompleteActive = false
 			return m, nil
 		}
+	case "shift+enter":
+		// Insert a newline
+		m.input.InsertString("\n")
+		m.resizeInput()
+		return m, nil
 	case "enter":
 		if m.autocompleteActive && len(m.autocompleteSuggs) > 0 {
-			// Complete and submit if no args needed, otherwise just complete
 			m.input.Reset()
 			m.input.SetValue("/" + m.autocompleteSuggs[m.autocompleteIndex])
 			m.autocompleteActive = false
-			// Submit it
 			text := strings.TrimSpace(m.input.Value())
 			if text != "" {
 				m.input.Reset()
+				m.resizeInput()
 				return m.handleSubmit(text)
 			}
 			return m, nil
@@ -424,6 +428,7 @@ func (m *Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				return m, nil
 			}
 			m.input.Reset()
+			m.resizeInput()
 			m.autocompleteActive = false
 			return m.handleSubmit(text)
 		}
@@ -464,6 +469,9 @@ func (m *Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 	var cmd tea.Cmd
 	m.input, cmd = m.input.Update(msg)
+
+	// Resize input area based on content
+	m.resizeInput()
 
 	// Update autocomplete based on current input
 	m.updateAutocomplete()
@@ -1480,6 +1488,21 @@ func formatStatus(raw json.RawMessage) string {
 		}
 	}
 	return strings.Join(lines, "\n")
+}
+
+// resizeInput adjusts the textarea height based on content (min 3, max 10 lines).
+func (m *Model) resizeInput() {
+	val := m.input.Value()
+	lines := strings.Count(val, "\n") + 1
+	h := lines + 1 // extra line for padding
+	if h < 3 {
+		h = 3
+	}
+	if h > 10 {
+		h = 10
+	}
+	m.input.SetHeight(h)
+	m.updateLayout()
 }
 
 func orDefault(s, def string) string {
