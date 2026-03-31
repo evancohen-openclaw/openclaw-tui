@@ -100,6 +100,9 @@ type Model struct {
 	mouseEnabled  bool
 	toolsExpanded bool
 
+	// Pending attachments for next message
+	pendingFiles []pendingAttachment
+
 	// Ctrl+C state
 	lastCtrlC time.Time
 }
@@ -519,7 +522,7 @@ var slashCommands = []string{
 	"help", "exit", "quit", "new", "reset", "abort", "status",
 	"model", "models", "agent", "agents", "session", "sessions",
 	"think", "fast", "verbose", "reasoning", "usage", "elevated", "elev",
-	"deliver", "settings", "clear", "mouse", "config",
+	"deliver", "settings", "clear", "mouse", "config", "attach", "file",
 }
 
 func (m *Model) updateAutocomplete() {
@@ -641,8 +644,12 @@ func (m *Model) handleSubmit(text string) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 
-	// Extract file attachments from the message
+	// Extract file attachments from the message text
 	message, attachments := m.extractAttachments(text)
+
+	// Add any pending attachments from /attach
+	attachments = append(attachments, m.pendingFiles...)
+	m.pendingFiles = nil
 
 	if message == "" && len(attachments) > 0 {
 		message = fmt.Sprintf("[%d file(s) attached]", len(attachments))
@@ -815,6 +822,34 @@ func (m *Model) handleCommand(raw string) (tea.Model, tea.Cmd) {
 	case "clear":
 		m.messages = nil
 		m.updateViewport()
+		return m, nil
+
+	case "attach", "file":
+		if args == "" {
+			if len(m.pendingFiles) > 0 {
+				var names []string
+				for _, f := range m.pendingFiles {
+					names = append(names, f.name)
+				}
+				m.addSystem(fmt.Sprintf("pending attachments: %s\nUse /attach <path> to add, or type a message to send with attachments", strings.Join(names, ", ")))
+			} else {
+				m.addSystem("usage: /attach <file-path>\nAttach an image to your next message. Send a message after to include it.")
+			}
+			return m, nil
+		}
+		if args == "clear" {
+			m.pendingFiles = nil
+			m.addSystem("cleared pending attachments")
+			return m, nil
+		}
+		expanded := expandPath(strings.TrimSpace(args))
+		att, err := loadFileAttachment(expanded)
+		if err != nil {
+			m.addSystem(fmt.Sprintf("failed to attach: %v", err))
+			return m, nil
+		}
+		m.pendingFiles = append(m.pendingFiles, *att)
+		m.addSystem(fmt.Sprintf("📎 attached %s (%s) — type a message to send", att.name, att.attachment.MimeType))
 		return m, nil
 
 	case "mouse":
