@@ -404,8 +404,8 @@ func (m *Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.autocompleteActive = false
 			return m, nil
 		}
-	case "shift+enter", "alt+enter":
-		// Insert a newline
+	case "shift+enter", "alt+enter", "ctrl+j":
+		// Insert a newline (Ctrl+J works on all terminals including Windows Terminal)
 		m.input.InsertString("\n")
 		m.resizeInput()
 		return m, nil
