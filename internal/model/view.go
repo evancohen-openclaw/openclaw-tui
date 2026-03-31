@@ -83,9 +83,16 @@ func (m *Model) updateViewport() {
 	if !m.ready {
 		return
 	}
+
+	// Only auto-scroll if user is already near the bottom
+	atBottom := m.viewport.ScrollPercent() >= 0.98 || m.viewport.TotalLineCount() <= m.viewport.Height()
+
 	content := m.renderMessages()
 	m.viewport.SetContent(content)
-	m.viewport.GotoBottom()
+
+	if atBottom {
+		m.viewport.GotoBottom()
+	}
 }
 
 func (m Model) renderHeader() string {
