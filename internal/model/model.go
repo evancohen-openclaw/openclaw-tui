@@ -122,7 +122,7 @@ type pickerItem struct {
 
 func (i pickerItem) Title() string       { return i.title_ }
 func (i pickerItem) Description() string { return i.description }
-func (i pickerItem) FilterValue() string { return i.title_ + " " + i.description }
+func (i pickerItem) FilterValue() string { return i.title_ }
 
 // sessionDelegate renders session items in a compact single-line format.
 type sessionDelegate struct {
