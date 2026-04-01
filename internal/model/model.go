@@ -1404,6 +1404,7 @@ func (m *Model) fetchSessionsOverlay() tea.Cmd {
 	agentID := m.currentAgentID
 	return func() tea.Msg {
 		result, err := client.ListSessions(gateway.SessionsListParams{
+			Limit:                50,
 			IncludeDerivedTitles: true,
 			IncludeLastMessage:   true,
 			AgentID:              agentID,
@@ -1413,17 +1414,37 @@ func (m *Model) fetchSessionsOverlay() tea.Cmd {
 		}
 		var items []pickerItem
 		for _, s := range result.Sessions {
+			// Build a clean title
 			title := s.DerivedTitle
 			if title == "" {
 				title = s.DisplayName
 			}
 			if title == "" {
+				title = s.Label
+			}
+			if title == "" {
+				title = s.Subject
+			}
+			if title == "" {
+				// Fall back to session key but make it readable
 				title = s.Key
 			}
-			preview := s.LastMessagePreview
-			if len(preview) > 60 {
-				preview = preview[:60] + "…"
+
+			// Truncate long titles
+			if len(title) > 60 {
+				title = title[:57] + "…"
 			}
+
+			// Build description: session key + last message preview
+			desc := s.Key
+			preview := strings.ReplaceAll(s.LastMessagePreview, "\n", " ")
+			if len(preview) > 50 {
+				preview = preview[:47] + "…"
+			}
+			if preview != "" {
+				desc += " — " + preview
+			}
+
 			sessionName := s.Key
 			if strings.HasPrefix(s.Key, "agent:") {
 				parts := strings.SplitN(s.Key, ":", 3)
@@ -1431,7 +1452,7 @@ func (m *Model) fetchSessionsOverlay() tea.Cmd {
 					sessionName = parts[2]
 				}
 			}
-			items = append(items, pickerItem{id: sessionName, title_: title, description: preview})
+			items = append(items, pickerItem{id: sessionName, title_: title, description: desc})
 		}
 		return pickerReadyMsg{pickerType: "sessions", items: items}
 	}
