@@ -38,9 +38,9 @@ func (m Model) View() tea.View {
 		mainView = lipgloss.JoinVertical(lipgloss.Left, mainView, input)
 	}
 
-	// Picker overlay on top if active
+	// Picker replaces main view when active
 	if m.pickerActive {
-		mainView = m.renderWithPicker(mainView)
+		return tea.NewView(m.pickerList.View())
 	}
 
 	v := tea.NewView(mainView)

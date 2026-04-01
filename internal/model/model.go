@@ -397,17 +397,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				items[i] = item
 			}
 
-			w := m.width * 2 / 3
-			if w < 40 {
-				w = 40
-			}
-			h := m.height * 2 / 3
-			if h < 10 {
-				h = 10
-			}
-
-			// Account for border (2) + padding (2) on each side
-			innerW := w - 6
+			innerW := m.width - 4
+			h := m.height - 2
 
 			delegate := list.NewDefaultDelegate()
 			delegate.Styles.SelectedTitle = lipgloss.NewStyle().
