@@ -477,7 +477,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			l.Title = msg.pickerType
 			l.SetShowStatusBar(true)
 			l.SetFilteringEnabled(true)
-			l.SetShowHelp(false)
+			l.SetShowHelp(true)
 			l.Styles.Title = lipgloss.NewStyle().
 				Foreground(lipgloss.Color("#A78BFA")).
 				Bold(true)
