@@ -1423,8 +1423,11 @@ func (m *Model) fetchSessionsOverlay() tea.Cmd {
 				}
 			}
 
-			// Title: prefer displayName/label/subject, then clean session name
-			title := s.DisplayName
+			// Title: prefer derivedTitle, then displayName/label/subject
+			title := s.DerivedTitle
+			if title == "" {
+				title = s.DisplayName
+			}
 			if title == "" {
 				title = s.Label
 			}
@@ -1432,28 +1435,26 @@ func (m *Model) fetchSessionsOverlay() tea.Cmd {
 				title = s.Subject
 			}
 			if title == "" {
-				title = sessionName
+				title = cleanSessionName(sessionName)
 			}
-			// Use derivedTitle only if it's short and doesn't look like message content
-			if s.DerivedTitle != "" && len(s.DerivedTitle) < 80 && !strings.Contains(s.DerivedTitle, "\n") && !strings.Contains(s.DerivedTitle, "```") {
-				title = s.DerivedTitle
-			}
+			// Strip leading metadata noise from titles
+			title = stripMessageMetadata(title)
 			if len(title) > 60 {
 				title = title[:57] + "…"
 			}
-
-			// Description: last message preview, cleaned
-			desc := strings.ReplaceAll(s.LastMessagePreview, "\n", " ")
-			// Strip metadata blocks
-			if idx := strings.Index(desc, "```"); idx >= 0 {
-				desc = desc[:idx]
+			if strings.TrimSpace(title) == "" {
+				title = cleanSessionName(sessionName)
 			}
+
+			// Description: clean preview
+			desc := stripMessageMetadata(s.LastMessagePreview)
+			desc = strings.ReplaceAll(desc, "\n", " ")
 			desc = strings.TrimSpace(desc)
 			if len(desc) > 70 {
 				desc = desc[:67] + "…"
 			}
 			if desc == "" {
-				desc = sessionName
+				desc = cleanSessionName(sessionName)
 			}
 
 			items = append(items, pickerItem{id: sessionName, title_: title, description: desc})
@@ -1774,6 +1775,75 @@ func (m *Model) extractAttachments(text string) (string, []pendingAttachment) {
 	}
 
 	return strings.TrimSpace(strings.Join(cleanedLines, "\n")), attachments
+}
+
+// cleanSessionName makes raw session keys more readable.
+func cleanSessionName(name string) string {
+	// "main" → "main"
+	// "tui-dec2d0e0-5b1f-..." → "tui session"
+	// "cron:uuid" → "cron job"
+	// "webchat:g-agent-main-..." → "webchat session"
+	if name == "main" {
+		return "main"
+	}
+	if strings.HasPrefix(name, "tui-") {
+		return "TUI session"
+	}
+	if strings.HasPrefix(name, "cron:") {
+		return "cron job"
+	}
+	if strings.HasPrefix(name, "webchat:") {
+		return "webchat session"
+	}
+	if strings.HasPrefix(name, "g-agent-") {
+		return "gateway session"
+	}
+	// Truncate UUIDs
+	if len(name) > 36 {
+		return name[:33] + "…"
+	}
+	return name
+}
+
+// stripMessageMetadata removes untrusted metadata blocks and noise from previews/titles.
+func stripMessageMetadata(s string) string {
+	// Strip "Sender (untrusted metadata): ```json ... ```" blocks
+	if idx := strings.Index(s, "Sender (untrusted metadata):"); idx >= 0 {
+		// Find end of the metadata block
+		rest := s[idx:]
+		// Look for the closing ``` after the opening ```json
+		if start := strings.Index(rest, "```json"); start >= 0 {
+			after := rest[start+7:]
+			if end := strings.Index(after, "```"); end >= 0 {
+				// Skip past closing ``` and any newlines
+				remaining := strings.TrimSpace(after[end+3:])
+				if idx > 0 {
+					remaining = strings.TrimSpace(s[:idx]) + " " + remaining
+				}
+				s = remaining
+			}
+		} else {
+			// No code block, just strip the "Sender..." line
+			lines := strings.SplitN(rest, "\n", 2)
+			if len(lines) > 1 {
+				s = strings.TrimSpace(lines[1])
+			}
+		}
+	}
+
+	// Strip "[cron:uuid..." prefix
+	if strings.HasPrefix(s, "[cron:") {
+		if idx := strings.Index(s, "]"); idx >= 0 {
+			s = strings.TrimSpace(s[idx+1:])
+		}
+	}
+
+	// Strip "Read HEARTBEAT.md..." system prompts
+	if strings.HasPrefix(s, "Read HEARTBEAT") {
+		return "heartbeat"
+	}
+
+	return strings.TrimSpace(s)
 }
 
 func isFilePath(s string) bool {
