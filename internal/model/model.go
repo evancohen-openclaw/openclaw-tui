@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"mime"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"time"
@@ -365,6 +366,19 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, tea.Batch(cmds...)
 
+	case shellResultMsg:
+		if msg.err != nil && msg.output == "" {
+			m.addSystem(fmt.Sprintf("error: %v", msg.err))
+		} else {
+			if msg.output != "" {
+				m.addSystem(msg.output)
+			}
+			if msg.err != nil {
+				m.addSystem(fmt.Sprintf("exit: %v", msg.err))
+			}
+		}
+		return m, nil
+
 	case clipboardImageMsg:
 		if msg.err != nil {
 			// No image on clipboard — that's fine, normal paste will handle text
@@ -393,11 +407,31 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 
 			delegate := list.NewDefaultDelegate()
+			delegate.Styles.SelectedTitle = lipgloss.NewStyle().
+				Foreground(lipgloss.Color("#A78BFA")).
+				Bold(true).
+				Padding(0, 0, 0, 2)
+			delegate.Styles.SelectedDesc = lipgloss.NewStyle().
+				Foreground(lipgloss.Color("#818CF8")).
+				Padding(0, 0, 0, 2)
+			delegate.Styles.NormalTitle = lipgloss.NewStyle().
+				Foreground(lipgloss.Color("#D4D4D4")).
+				Padding(0, 0, 0, 2)
+			delegate.Styles.NormalDesc = lipgloss.NewStyle().
+				Foreground(lipgloss.Color("#64748B")).
+				Padding(0, 0, 0, 2)
+
 			l := list.New(items, delegate, w, h)
 			l.Title = "Select " + msg.pickerType
 			l.SetShowStatusBar(true)
 			l.SetFilteringEnabled(true)
 			l.SetShowHelp(true)
+
+			// Style the title bar
+			l.Styles.Title = lipgloss.NewStyle().
+				Foreground(lipgloss.Color("#A78BFA")).
+				Bold(true).
+				Padding(0, 1)
 
 			m.pickerList = l
 			m.pickerActive = true
@@ -682,6 +716,13 @@ func (m *Model) handleSubmit(text string) (tea.Model, tea.Cmd) {
 	// Slash commands
 	if strings.HasPrefix(text, "/") {
 		return m.handleCommand(text)
+	}
+
+	// Local shell command (! prefix)
+	if strings.HasPrefix(text, "!") && len(text) > 1 {
+		shellCmd := strings.TrimSpace(text[1:])
+		m.addSystem(fmt.Sprintf("$ %s", shellCmd))
+		return m, m.runLocalShell(shellCmd)
 	}
 
 	// Regular message
@@ -1625,6 +1666,12 @@ func formatStatus(raw json.RawMessage) string {
 	return strings.Join(lines, "\n")
 }
 
+// shellResultMsg is returned from a local shell command.
+type shellResultMsg struct {
+	output string
+	err    error
+}
+
 // clipboardImageMsg is sent when a clipboard image check completes.
 type clipboardImageMsg struct {
 	attachment *pendingAttachment
@@ -1810,6 +1857,15 @@ func loadFileAttachment(path string) (*pendingAttachment, error) {
 			Content:  encoded,
 		},
 	}, nil
+}
+
+func (m *Model) runLocalShell(command string) tea.Cmd {
+	return func() tea.Msg {
+		cmd := exec.Command("sh", "-c", command)
+		cmd.Env = append(os.Environ(), "OPENCLAW_SHELL=tui-local")
+		out, err := cmd.CombinedOutput()
+		return shellResultMsg{output: strings.TrimRight(string(out), "\n"), err: err}
+	}
 }
 
 func (m *Model) pasteClipboardImage() tea.Cmd {

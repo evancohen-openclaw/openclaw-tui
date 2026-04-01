@@ -152,6 +152,10 @@ func (m Model) renderFooter() string {
 		parts = append(parts, "deliver")
 	}
 
+	if len(m.pendingFiles) > 0 {
+		parts = append(parts, fmt.Sprintf("📎 %d", len(m.pendingFiles)))
+	}
+
 	parts = append(parts, m.formatTokens())
 
 	text := strings.Join(parts, " │ ")
