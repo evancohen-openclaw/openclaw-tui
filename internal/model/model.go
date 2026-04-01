@@ -1414,37 +1414,7 @@ func (m *Model) fetchSessionsOverlay() tea.Cmd {
 		}
 		var items []pickerItem
 		for _, s := range result.Sessions {
-			// Build a clean title
-			title := s.DerivedTitle
-			if title == "" {
-				title = s.DisplayName
-			}
-			if title == "" {
-				title = s.Label
-			}
-			if title == "" {
-				title = s.Subject
-			}
-			if title == "" {
-				// Fall back to session key but make it readable
-				title = s.Key
-			}
-
-			// Truncate long titles
-			if len(title) > 60 {
-				title = title[:57] + "…"
-			}
-
-			// Build description: session key + last message preview
-			desc := s.Key
-			preview := strings.ReplaceAll(s.LastMessagePreview, "\n", " ")
-			if len(preview) > 50 {
-				preview = preview[:47] + "…"
-			}
-			if preview != "" {
-				desc += " — " + preview
-			}
-
+			// Extract the short session name from the key
 			sessionName := s.Key
 			if strings.HasPrefix(s.Key, "agent:") {
 				parts := strings.SplitN(s.Key, ":", 3)
@@ -1452,6 +1422,40 @@ func (m *Model) fetchSessionsOverlay() tea.Cmd {
 					sessionName = parts[2]
 				}
 			}
+
+			// Title: prefer displayName/label/subject, then clean session name
+			title := s.DisplayName
+			if title == "" {
+				title = s.Label
+			}
+			if title == "" {
+				title = s.Subject
+			}
+			if title == "" {
+				title = sessionName
+			}
+			// Use derivedTitle only if it's short and doesn't look like message content
+			if s.DerivedTitle != "" && len(s.DerivedTitle) < 80 && !strings.Contains(s.DerivedTitle, "\n") && !strings.Contains(s.DerivedTitle, "```") {
+				title = s.DerivedTitle
+			}
+			if len(title) > 60 {
+				title = title[:57] + "…"
+			}
+
+			// Description: last message preview, cleaned
+			desc := strings.ReplaceAll(s.LastMessagePreview, "\n", " ")
+			// Strip metadata blocks
+			if idx := strings.Index(desc, "```"); idx >= 0 {
+				desc = desc[:idx]
+			}
+			desc = strings.TrimSpace(desc)
+			if len(desc) > 70 {
+				desc = desc[:67] + "…"
+			}
+			if desc == "" {
+				desc = sessionName
+			}
+
 			items = append(items, pickerItem{id: sessionName, title_: title, description: desc})
 		}
 		return pickerReadyMsg{pickerType: "sessions", items: items}
