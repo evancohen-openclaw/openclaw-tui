@@ -406,6 +406,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				h = 10
 			}
 
+			// Account for border (2) + padding (2) on each side
+			innerW := w - 6
+
 			delegate := list.NewDefaultDelegate()
 			delegate.Styles.SelectedTitle = lipgloss.NewStyle().
 				Foreground(lipgloss.Color("#A78BFA")).
@@ -421,7 +424,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				Foreground(lipgloss.Color("#64748B")).
 				Padding(0, 0, 0, 2)
 
-			l := list.New(items, delegate, w, h)
+			l := list.New(items, delegate, innerW, h-4)
 			l.Title = "Select " + msg.pickerType
 			l.SetShowStatusBar(true)
 			l.SetFilteringEnabled(true)
@@ -1423,12 +1426,10 @@ func (m *Model) fetchSessionsOverlay() tea.Cmd {
 				}
 			}
 
-			// Title: label > displayName > humanized key
+			// Title: label > subject > humanized key
 			// Skip derivedTitle — gateway fills it with first message content
+			// Skip displayName — often raw session keys
 			title := s.Label
-			if title == "" {
-				title = s.DisplayName
-			}
 			if title == "" {
 				title = s.Subject
 			}
