@@ -11,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	"charm.land/bubbles/v2/key"
 	"charm.land/bubbles/v2/list"
 	"charm.land/bubbles/v2/spinner"
 	"charm.land/bubbles/v2/textarea"
@@ -426,6 +427,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				Foreground(lipgloss.Color("#A78BFA")).
 				Bold(true).
 				Padding(0, 1)
+
+			// Override quit keys — q/esc should close picker, not exit TUI
+			l.KeyMap.Quit = key.NewBinding(key.WithDisabled())
+			l.KeyMap.ForceQuit = key.NewBinding(key.WithDisabled())
 
 			m.pickerList = l
 			m.pickerActive = true
@@ -1431,14 +1436,15 @@ func (m *Model) fetchSessionsOverlay() tea.Cmd {
 				title = title[:57] + "…"
 			}
 
-			// Description: last message preview, cleaned
-			desc := strings.ReplaceAll(s.LastMessagePreview, "\n", " ")
-			desc = strings.TrimSpace(desc)
-			if len(desc) > 70 {
-				desc = desc[:67] + "…"
+			// Description: session key + last message preview
+			preview := strings.ReplaceAll(s.LastMessagePreview, "\n", " ")
+			preview = strings.TrimSpace(preview)
+			if len(preview) > 60 {
+				preview = preview[:57] + "…"
 			}
-			if desc == "" {
-				desc = sessionName
+			desc := sessionName
+			if preview != "" {
+				desc = sessionName + " · " + preview
 			}
 
 			items = append(items, pickerItem{id: sessionName, title_: title, description: desc})
