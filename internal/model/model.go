@@ -4,6 +4,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"io"
 	"mime"
 	"os"
 	"os/exec"
@@ -115,11 +116,81 @@ type pickerItem struct {
 	id          string
 	title_      string
 	description string
+	timeAgo     string
+	updatedAt   time.Time
 }
 
 func (i pickerItem) Title() string       { return i.title_ }
 func (i pickerItem) Description() string { return i.description }
 func (i pickerItem) FilterValue() string { return i.title_ + " " + i.description }
+
+// sessionDelegate renders session items in a compact single-line format.
+type sessionDelegate struct {
+	theme *theme.Theme
+}
+
+func (d sessionDelegate) Height() int                          { return 1 }
+func (d sessionDelegate) Spacing() int                         { return 0 }
+func (d sessionDelegate) Update(msg tea.Msg, m *list.Model) tea.Cmd { return nil }
+
+func (d sessionDelegate) Render(w io.Writer, m list.Model, index int, item list.Item) {
+	i, ok := item.(pickerItem)
+	if !ok {
+		return
+	}
+
+	isSelected := index == m.Index()
+	width := m.Width()
+
+	// Time ago column (right-aligned, fixed width)
+	timeCol := i.timeAgo
+	timeWidth := 8
+
+	// Preview column
+	preview := i.description
+	
+	// Title column — give it a reasonable chunk
+	titleWidth := 35
+	if titleWidth > width/3 {
+		titleWidth = width / 3
+	}
+
+	title := i.title_
+	if len(title) > titleWidth {
+		title = title[:titleWidth-1] + "…"
+	}
+	for len(title) < titleWidth {
+		title += " "
+	}
+
+	// Preview gets the rest
+	previewWidth := width - titleWidth - timeWidth - 6 // spacing/cursor
+	if previewWidth < 0 {
+		previewWidth = 0
+	}
+	if len(preview) > previewWidth {
+		preview = preview[:previewWidth-1] + "…"
+	}
+
+	// Pad time
+	for len(timeCol) < timeWidth {
+		timeCol = " " + timeCol
+	}
+
+	if isSelected {
+		cursor := lipgloss.NewStyle().Foreground(lipgloss.Color("#A78BFA")).Bold(true).Render("→ ")
+		titleStr := lipgloss.NewStyle().Foreground(lipgloss.Color("#A78BFA")).Bold(true).Render(title)
+		timeStr := lipgloss.NewStyle().Foreground(lipgloss.Color("#818CF8")).Render(timeCol)
+		previewStr := lipgloss.NewStyle().Foreground(lipgloss.Color("#94A3B8")).Render(preview)
+		fmt.Fprintf(w, "%s%s %s · %s", cursor, titleStr, timeStr, previewStr)
+	} else {
+		cursor := "  "
+		titleStr := lipgloss.NewStyle().Foreground(lipgloss.Color("#D4D4D4")).Render(title)
+		timeStr := lipgloss.NewStyle().Foreground(lipgloss.Color("#64748B")).Render(timeCol)
+		previewStr := lipgloss.NewStyle().Foreground(lipgloss.Color("#475569")).Render(preview)
+		fmt.Fprintf(w, "%s%s %s · %s", cursor, titleStr, timeStr, previewStr)
+	}
+}
 
 type chatMessage struct {
 	role       string // "user", "assistant", "system", "tool-pending", "tool-success", "tool-error", "assistant-stream", "thinking"
@@ -398,35 +469,18 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				items[i] = item
 			}
 
-			innerW := m.width - 4
-			h := m.height - 2
+			w := m.width
+			h := m.height
 
-			delegate := list.NewDefaultDelegate()
-			delegate.Styles.SelectedTitle = lipgloss.NewStyle().
-				Foreground(lipgloss.Color("#A78BFA")).
-				Bold(true).
-				Padding(0, 0, 0, 2)
-			delegate.Styles.SelectedDesc = lipgloss.NewStyle().
-				Foreground(lipgloss.Color("#818CF8")).
-				Padding(0, 0, 0, 2)
-			delegate.Styles.NormalTitle = lipgloss.NewStyle().
-				Foreground(lipgloss.Color("#D4D4D4")).
-				Padding(0, 0, 0, 2)
-			delegate.Styles.NormalDesc = lipgloss.NewStyle().
-				Foreground(lipgloss.Color("#64748B")).
-				Padding(0, 0, 0, 2)
-
-			l := list.New(items, delegate, innerW, h-4)
-			l.Title = "Select " + msg.pickerType
+			delegate := sessionDelegate{theme: &m.theme}
+			l := list.New(items, delegate, w, h)
+			l.Title = msg.pickerType
 			l.SetShowStatusBar(true)
 			l.SetFilteringEnabled(true)
-			l.SetShowHelp(true)
-
-			// Style the title bar
+			l.SetShowHelp(false)
 			l.Styles.Title = lipgloss.NewStyle().
 				Foreground(lipgloss.Color("#A78BFA")).
-				Bold(true).
-				Padding(0, 1)
+				Bold(true)
 
 			// Override quit keys — q/esc should close picker, not exit TUI
 			l.KeyMap.Quit = key.NewBinding(key.WithDisabled())
@@ -1403,7 +1457,7 @@ func (m *Model) fetchSessionsOverlay() tea.Cmd {
 	agentID := m.currentAgentID
 	return func() tea.Msg {
 		result, err := client.ListSessions(gateway.SessionsListParams{
-			Limit:                50,
+			Limit:                100,
 			IncludeDerivedTitles: true,
 			IncludeLastMessage:   true,
 			AgentID:              agentID,
@@ -1442,12 +1496,16 @@ func (m *Model) fetchSessionsOverlay() tea.Cmd {
 			if len(preview) > 60 {
 				preview = preview[:57] + "…"
 			}
-			desc := sessionName
-			if preview != "" {
-				desc = sessionName + " · " + preview
-			}
+			updatedAt := parseUpdatedAt(s.UpdatedAt)
+			ago := relativeTime(updatedAt)
 
-			items = append(items, pickerItem{id: sessionName, title_: title, description: desc})
+			items = append(items, pickerItem{
+				id:          sessionName,
+				title_:      title,
+				description: preview,
+				timeAgo:     ago,
+				updatedAt:   updatedAt,
+			})
 		}
 		return pickerReadyMsg{pickerType: "sessions", items: items}
 	}
@@ -1765,6 +1823,46 @@ func (m *Model) extractAttachments(text string) (string, []pendingAttachment) {
 	}
 
 	return strings.TrimSpace(strings.Join(cleanedLines, "\n")), attachments
+}
+
+// relativeTime returns a human-friendly relative time string.
+func relativeTime(t time.Time) string {
+	d := time.Since(t)
+	switch {
+	case d < time.Minute:
+		return "now"
+	case d < time.Hour:
+		m := int(d.Minutes())
+		return fmt.Sprintf("%dm ago", m)
+	case d < 24*time.Hour:
+		h := int(d.Hours())
+		return fmt.Sprintf("%dh ago", h)
+	case d < 7*24*time.Hour:
+		days := int(d.Hours() / 24)
+		return fmt.Sprintf("%dd ago", days)
+	default:
+		return t.Format("Jan 2")
+	}
+}
+
+// parseUpdatedAt parses the updatedAt field which can be a number (ms) or string.
+func parseUpdatedAt(raw json.RawMessage) time.Time {
+	if len(raw) == 0 {
+		return time.Time{}
+	}
+	// Try number first
+	var ms float64
+	if err := json.Unmarshal(raw, &ms); err == nil {
+		return time.UnixMilli(int64(ms))
+	}
+	// Try string
+	var s string
+	if err := json.Unmarshal(raw, &s); err == nil {
+		if t, err := time.Parse(time.RFC3339, s); err == nil {
+			return t
+		}
+	}
+	return time.Time{}
 }
 
 // cleanSessionName makes raw session keys more readable.
