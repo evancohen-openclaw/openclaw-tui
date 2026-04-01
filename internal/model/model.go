@@ -570,10 +570,10 @@ func (m *Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "pgdown":
 		m.viewport.HalfPageDown()
 		return m, nil
-	case "home":
+	case "ctrl+home":
 		m.viewport.GotoTop()
 		return m, nil
-	case "end":
+	case "ctrl+end":
 		m.viewport.GotoBottom()
 		return m, nil
 	}
