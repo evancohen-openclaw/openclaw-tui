@@ -1423,13 +1423,11 @@ func (m *Model) fetchSessionsOverlay() tea.Cmd {
 				}
 			}
 
-			// Title: prefer derivedTitle, then displayName/label/subject
-			title := s.DerivedTitle
+			// Title: label > displayName > humanized key
+			// Skip derivedTitle — gateway fills it with first message content
+			title := s.Label
 			if title == "" {
 				title = s.DisplayName
-			}
-			if title == "" {
-				title = s.Label
 			}
 			if title == "" {
 				title = s.Subject
@@ -1437,24 +1435,18 @@ func (m *Model) fetchSessionsOverlay() tea.Cmd {
 			if title == "" {
 				title = cleanSessionName(sessionName)
 			}
-			// Strip leading metadata noise from titles
-			title = stripMessageMetadata(title)
 			if len(title) > 60 {
 				title = title[:57] + "…"
 			}
-			if strings.TrimSpace(title) == "" {
-				title = cleanSessionName(sessionName)
-			}
 
-			// Description: clean preview
-			desc := stripMessageMetadata(s.LastMessagePreview)
-			desc = strings.ReplaceAll(desc, "\n", " ")
+			// Description: last message preview, cleaned
+			desc := strings.ReplaceAll(s.LastMessagePreview, "\n", " ")
 			desc = strings.TrimSpace(desc)
 			if len(desc) > 70 {
 				desc = desc[:67] + "…"
 			}
 			if desc == "" {
-				desc = cleanSessionName(sessionName)
+				desc = sessionName
 			}
 
 			items = append(items, pickerItem{id: sessionName, title_: title, description: desc})
