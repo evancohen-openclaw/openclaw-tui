@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"charm.land/bubbles/v2/list"
 	"charm.land/bubbles/v2/spinner"
 	"charm.land/bubbles/v2/textarea"
 	"charm.land/bubbles/v2/viewport"
@@ -83,11 +84,10 @@ type Model struct {
 	localRunIDs  map[string]bool
 	runStartedAt *time.Time
 
-	// Overlay picker state
-	overlayActive bool
-	overlayType   string // "agents", "models", "sessions"
-	overlayItems  []overlayItem
-	overlayIndex  int
+	// Picker (list component) state
+	pickerActive bool
+	pickerType   string // "agents", "models", "sessions"
+	pickerList   list.Model
 
 	// Autocomplete state
 	autocompleteActive bool
@@ -108,11 +108,16 @@ type Model struct {
 	lastCtrlC time.Time
 }
 
-type overlayItem struct {
+// pickerItem implements list.DefaultItem for the picker.
+type pickerItem struct {
 	id          string
-	title       string
+	title_      string
 	description string
 }
+
+func (i pickerItem) Title() string       { return i.title_ }
+func (i pickerItem) Description() string { return i.description }
+func (i pickerItem) FilterValue() string { return i.title_ + " " + i.description }
 
 type chatMessage struct {
 	role       string // "user", "assistant", "system", "tool-pending", "tool-success", "tool-error", "assistant-stream", "thinking"
@@ -123,11 +128,11 @@ type chatMessage struct {
 // tickMsg drives periodic updates (elapsed timer, etc.)
 type tickMsg time.Time
 
-// overlayReadyMsg signals that overlay data has been fetched.
-type overlayReadyMsg struct {
-	overlayType string
-	items       []overlayItem
-	err         error
+// pickerReadyMsg signals that picker data has been fetched.
+type pickerReadyMsg struct {
+	pickerType string
+	items      []pickerItem
+	err        error
 }
 
 func doTick() tea.Cmd {
@@ -369,16 +374,36 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.addSystem(fmt.Sprintf("📎 %s attached — type a message and press Enter to send", msg.attachment.name))
 		return m, nil
 
-	case overlayReadyMsg:
+	case pickerReadyMsg:
 		if msg.err != nil {
-			m.addSystem(fmt.Sprintf("%s list failed: %v", msg.overlayType, msg.err))
+			m.addSystem(fmt.Sprintf("%s list failed: %v", msg.pickerType, msg.err))
 		} else if len(msg.items) > 0 {
-			m.overlayActive = true
-			m.overlayType = msg.overlayType
-			m.overlayItems = msg.items
-			m.overlayIndex = 0
+			items := make([]list.Item, len(msg.items))
+			for i, item := range msg.items {
+				items[i] = item
+			}
+
+			w := m.width * 2 / 3
+			if w < 40 {
+				w = 40
+			}
+			h := m.height * 2 / 3
+			if h < 10 {
+				h = 10
+			}
+
+			delegate := list.NewDefaultDelegate()
+			l := list.New(items, delegate, w, h)
+			l.Title = "Select " + msg.pickerType
+			l.SetShowStatusBar(true)
+			l.SetFilteringEnabled(true)
+			l.SetShowHelp(true)
+
+			m.pickerList = l
+			m.pickerActive = true
+			m.pickerType = msg.pickerType
 		} else {
-			m.addSystem(fmt.Sprintf("no %s found", msg.overlayType))
+			m.addSystem(fmt.Sprintf("no %s found", msg.pickerType))
 		}
 		return m, tea.Batch(cmds...)
 	}
@@ -399,9 +424,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 }
 
 func (m *Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
-	// Overlay takes priority over all other input
-	if m.overlayActive {
-		return m.handleOverlayKey(msg)
+	// Picker takes priority over all other input
+	if m.pickerActive {
+		return m.handlePickerKey(msg)
 	}
 
 	switch msg.String() {
@@ -573,35 +598,43 @@ func (m *Model) updateAutocomplete() {
 	}
 }
 
-func (m *Model) handleOverlayKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+func (m *Model) handlePickerKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch msg.String() {
-	case "escape", "ctrl+c":
-		m.overlayActive = false
-		return m, nil
-	case "up", "k":
-		if m.overlayIndex > 0 {
-			m.overlayIndex--
+	case "escape":
+		// If filtering, let list handle it; otherwise close picker
+		if m.pickerList.FilterState() == list.Filtering {
+			var cmd tea.Cmd
+			m.pickerList, cmd = m.pickerList.Update(msg)
+			return m, cmd
 		}
+		m.pickerActive = false
 		return m, nil
-	case "down", "j":
-		if m.overlayIndex < len(m.overlayItems)-1 {
-			m.overlayIndex++
-		}
+	case "ctrl+c":
+		m.pickerActive = false
 		return m, nil
 	case "enter":
-		if len(m.overlayItems) == 0 {
-			m.overlayActive = false
+		if m.pickerList.FilterState() == list.Filtering {
+			var cmd tea.Cmd
+			m.pickerList, cmd = m.pickerList.Update(msg)
+			return m, cmd
+		}
+		item, ok := m.pickerList.SelectedItem().(pickerItem)
+		if !ok {
+			m.pickerActive = false
 			return m, nil
 		}
-		selected := m.overlayItems[m.overlayIndex]
-		m.overlayActive = false
-		return m.handleOverlaySelect(selected)
+		m.pickerActive = false
+		return m.handlePickerSelect(item)
 	}
-	return m, nil
+
+	// Let the list handle everything else (filtering, nav)
+	var cmd tea.Cmd
+	m.pickerList, cmd = m.pickerList.Update(msg)
+	return m, cmd
 }
 
-func (m *Model) handleOverlaySelect(item overlayItem) (tea.Model, tea.Cmd) {
-	switch m.overlayType {
+func (m *Model) handlePickerSelect(item pickerItem) (tea.Model, tea.Cmd) {
+	switch m.pickerType {
 	case "agents":
 		m.currentAgentID = item.id
 		m.currentSessionKey = m.resolveSessionKey("")
@@ -617,7 +650,7 @@ func (m *Model) handleOverlaySelect(item overlayItem) (tea.Model, tea.Cmd) {
 		m.messages = nil
 		m.assembler.Reset()
 		m.activeRunID = ""
-		m.addSystem(fmt.Sprintf("switched to session: %s", item.title))
+		m.addSystem(fmt.Sprintf("switched to session: %s", item.title_))
 		return m, m.loadHistory()
 	}
 	return m, nil
@@ -1307,9 +1340,9 @@ func (m *Model) fetchAgentsOverlay() tea.Cmd {
 	return func() tea.Msg {
 		result, err := client.ListAgents()
 		if err != nil {
-			return overlayReadyMsg{overlayType: "agents", err: err}
+			return pickerReadyMsg{pickerType: "agents", err: err}
 		}
-		var items []overlayItem
+		var items []pickerItem
 		for _, a := range result.Agents {
 			name := a.Name
 			if name == "" {
@@ -1319,9 +1352,9 @@ func (m *Model) fetchAgentsOverlay() tea.Cmd {
 			if a.ID == result.DefaultID {
 				desc += " (default)"
 			}
-			items = append(items, overlayItem{id: a.ID, title: name, description: desc})
+			items = append(items, pickerItem{id: a.ID, title_: name, description: desc})
 		}
-		return overlayReadyMsg{overlayType: "agents", items: items}
+		return pickerReadyMsg{pickerType: "agents", items: items}
 	}
 }
 
@@ -1335,9 +1368,9 @@ func (m *Model) fetchSessionsOverlay() tea.Cmd {
 			AgentID:              agentID,
 		})
 		if err != nil {
-			return overlayReadyMsg{overlayType: "sessions", err: err}
+			return pickerReadyMsg{pickerType: "sessions", err: err}
 		}
-		var items []overlayItem
+		var items []pickerItem
 		for _, s := range result.Sessions {
 			title := s.DerivedTitle
 			if title == "" {
@@ -1350,7 +1383,6 @@ func (m *Model) fetchSessionsOverlay() tea.Cmd {
 			if len(preview) > 60 {
 				preview = preview[:60] + "…"
 			}
-			// Extract session name from key for selection
 			sessionName := s.Key
 			if strings.HasPrefix(s.Key, "agent:") {
 				parts := strings.SplitN(s.Key, ":", 3)
@@ -1358,9 +1390,9 @@ func (m *Model) fetchSessionsOverlay() tea.Cmd {
 					sessionName = parts[2]
 				}
 			}
-			items = append(items, overlayItem{id: sessionName, title: title, description: preview})
+			items = append(items, pickerItem{id: sessionName, title_: title, description: preview})
 		}
-		return overlayReadyMsg{overlayType: "sessions", items: items}
+		return pickerReadyMsg{pickerType: "sessions", items: items}
 	}
 }
 
@@ -1369,18 +1401,18 @@ func (m *Model) fetchModelsOverlay() tea.Cmd {
 	return func() tea.Msg {
 		result, err := client.ListModels()
 		if err != nil {
-			return overlayReadyMsg{overlayType: "models", err: err}
+			return pickerReadyMsg{pickerType: "models", err: err}
 		}
-		var items []overlayItem
+		var items []pickerItem
 		for _, model := range result.Models {
 			id := model.Provider + "/" + model.ID
 			name := model.Name
 			if name == "" || name == model.ID {
 				name = id
 			}
-			items = append(items, overlayItem{id: id, title: name, description: id})
+			items = append(items, pickerItem{id: id, title_: name, description: id})
 		}
-		return overlayReadyMsg{overlayType: "models", items: items}
+		return pickerReadyMsg{pickerType: "models", items: items}
 	}
 }
 

@@ -38,9 +38,9 @@ func (m Model) View() tea.View {
 		mainView = lipgloss.JoinVertical(lipgloss.Left, mainView, input)
 	}
 
-	// Overlay on top if active
-	if m.overlayActive {
-		mainView = m.renderWithOverlay(mainView)
+	// Picker overlay on top if active
+	if m.pickerActive {
+		mainView = m.renderWithPicker(mainView)
 	}
 
 	v := tea.NewView(mainView)
@@ -318,30 +318,9 @@ func (m Model) renderAutocomplete() string {
 	return strings.Join(lines, "\n")
 }
 
-// renderWithOverlay renders the overlay picker on top of the main view.
-func (m Model) renderWithOverlay(base string) string {
-	if len(m.overlayItems) == 0 {
-		return base
-	}
-
-	// Build overlay content
-	title := m.theme.OverlayTitle.Render(fmt.Sprintf("Select %s", m.overlayType))
-	hint := m.theme.Dim.Render("↑/↓ navigate • enter select • esc cancel")
-
-	var items []string
-	for i, item := range m.overlayItems {
-		label := item.title
-		if item.description != "" && item.description != item.title {
-			label += m.theme.Dim.Render(" — " + item.description)
-		}
-		if i == m.overlayIndex {
-			items = append(items, m.theme.OverlayItemActive.Render("> "+label))
-		} else {
-			items = append(items, m.theme.OverlayItem.Render("  "+label))
-		}
-	}
-
-	overlayContent := title + "\n" + hint + "\n\n" + strings.Join(items, "\n")
+// renderWithPicker renders the list picker on top of the main view.
+func (m Model) renderWithPicker(base string) string {
+	pickerView := m.pickerList.View()
 
 	overlayWidth := m.width * 2 / 3
 	if overlayWidth < 40 {
@@ -351,9 +330,7 @@ func (m Model) renderWithOverlay(base string) string {
 		overlayWidth = m.width - 4
 	}
 
-	overlay := m.theme.OverlayBorder.Width(overlayWidth).Render(overlayContent)
-
-	// Center the overlay on the base
+	overlay := m.theme.OverlayBorder.Width(overlayWidth).Render(pickerView)
 	return placeOverlay(m.width, m.height, overlay, base)
 }
 
